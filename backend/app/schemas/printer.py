@@ -445,3 +445,9 @@ class DiagnosticRequest(BaseModel):
     ip_address: str
     serial_number: str | None = None
     access_code: str | None = None
+
+
+class PrinterFilesDownloadRequest(BaseModel):
+    """Printer paths selected for a bulk download."""
+
+    paths: list[str] = Field(..., min_length=1, max_length=1000)

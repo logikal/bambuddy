@@ -221,6 +221,8 @@ export default {
 
   // Yazıcılar sayfası
   printers: {
+    fileAccessAvailable: 'Yazıcı dosyalarına erişim',
+    fileAccessOfflineHint: 'Canlı durum çevrimdışı olsa da depolama alanına FTP üzerinden göz atılabilir.',
     title: 'Yazıcılar',
     addPrinter: 'Yazıcı Ekle',
     addPreflight: {
@@ -870,6 +872,19 @@ export default {
 
   // Arşivler sayfası
   archives: {
+    media: {
+      title: 'Baskı videoları',
+      download: 'Baskı videolarını indir',
+      searching: 'Yazıcıda video aranıyor…',
+      searchFailed: 'Yazıcıdaki videolar kontrol edilemedi.',
+      none: 'Bu baskı için hızlandırılmış çekim veya IP kamera parçası bulunamadı.',
+      attachedTimelapse: 'Ekli hızlandırılmış çekim',
+      printerFiles: 'Yazıcıda kalan dosyalar',
+      downloadSelected: 'Seçilenleri indir',
+      printerMissing: 'Yazıcı artık yapılandırılmış değil',
+      timelapseUnavailable: 'Hızlandırılmış çekim dizini okunamadı',
+      ipcamUnavailable: 'IP kamera dizini okunamadı',
+    },
     title: 'Baskı Arşivleri',
     no3mfBanner: {
       title: 'Bazı son baskılar küçük resimlerle birlikte arşivlenemedi',
@@ -3108,6 +3123,12 @@ export default {
 
   // Yazıcı Dosya Yöneticisi modali (yazıcı dahili deposu)
   printerFiles: {
+    zipStarted: '{{count}} dosya için ZIP indirmesi başlatıldı',
+    downloadFailed: 'İndirme başarısız: {{error}}',
+    unknownError: 'Bilinmeyen hata',
+    shiftSelectHint: 'Bir aralık seçmek için Shift tuşuyla tıklayın',
+    selectFile: '{{name}} öğesini seç',
+    deselectFile: '{{name}} seçimini kaldır',
     title: 'Dosya Yöneticisi',
     storageUsed: 'Kullanılan:',
     storageFree: 'Boş:',

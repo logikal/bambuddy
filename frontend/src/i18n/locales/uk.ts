@@ -221,6 +221,8 @@ export default {
 
   // Printers page
   printers: {
+    fileAccessAvailable: 'Доступ до файлів принтера',
+    fileAccessOfflineHint: 'Поточний стан недоступний, але сховище все ще можна переглядати через FTP.',
     title: "Принтери",
     addPrinter: "Додати принтер",
     addPreflight: {
@@ -874,6 +876,19 @@ export default {
 
   // Archives page
   archives: {
+    media: {
+      title: 'Відео друку',
+      download: 'Завантажити відео друку',
+      searching: 'Пошук відео на принтері…',
+      searchFailed: 'Не вдалося перевірити відео на принтері.',
+      none: 'Для цього друку не знайдено таймлапсів або фрагментів IP-камери.',
+      attachedTimelapse: 'Прикріплений таймлапс',
+      printerFiles: 'Файли, що залишилися на принтері',
+      downloadSelected: 'Завантажити вибране',
+      printerMissing: 'Принтер більше не налаштовано',
+      timelapseUnavailable: 'Не вдалося прочитати каталог таймлапсів',
+      ipcamUnavailable: 'Не вдалося прочитати каталог IP-камери',
+    },
     title: "Архіви друку",
     no3mfBanner: {
       title: "Деякі нещодавні роздруківки не вдалося заархівувати з мініатюрами",
@@ -3133,6 +3148,12 @@ export default {
 
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
+    zipStarted: 'Розпочато завантаження ZIP для {{count}} файлів',
+    downloadFailed: 'Помилка завантаження: {{error}}',
+    unknownError: 'Невідома помилка',
+    shiftSelectHint: 'Клацніть із Shift, щоб вибрати діапазон',
+    selectFile: 'Вибрати {{name}}',
+    deselectFile: 'Зняти вибір із {{name}}',
     title: "Менеджер файлів",
     storageUsed: "Використовується:",
     storageFree: "Вільно:",

@@ -221,6 +221,8 @@ export default {
 
   // Printers page
   printers: {
+    fileAccessAvailable: 'Acceso a archivos de la impresora',
+    fileAccessOfflineHint: 'El estado en vivo está sin conexión, pero aún se puede explorar el almacenamiento mediante FTP.',
     addPreflight: {
       checking: 'Comprobando la conexión...',
       warning: 'Algunas comprobaciones de conexión fallaron. Esta impresora podría aparecer como desconectada. Revisa las comprobaciones de abajo, soluciona lo que puedas o guárdala de todos modos.',
@@ -870,6 +872,19 @@ export default {
 
   // Archives page
   archives: {
+    media: {
+      title: 'Vídeos de la impresión',
+      download: 'Descargar vídeos de la impresión',
+      searching: 'Buscando vídeos en la impresora…',
+      searchFailed: 'No se pudieron buscar vídeos en la impresora.',
+      none: 'No se encontraron vídeos timelapse ni fragmentos de cámara IP para esta impresión.',
+      attachedTimelapse: 'Timelapse adjunto',
+      printerFiles: 'Archivos que aún están en la impresora',
+      downloadSelected: 'Descargar seleccionados',
+      printerMissing: 'La impresora ya no está configurada',
+      timelapseUnavailable: 'No se pudo leer el directorio de timelapses',
+      ipcamUnavailable: 'No se pudo leer el directorio de la cámara IP',
+    },
     title: 'Archivos de impresión',
     no3mfBanner: {
       title: 'Algunas impresiones recientes no se pudieron archivar con miniaturas',
@@ -3107,6 +3122,12 @@ export default {
 
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
+    zipStarted: 'Se inició la descarga ZIP de {{count}} archivos',
+    downloadFailed: 'Error de descarga: {{error}}',
+    unknownError: 'Error desconocido',
+    shiftSelectHint: 'Mayús-clic para seleccionar un intervalo',
+    selectFile: 'Seleccionar {{name}}',
+    deselectFile: 'Deseleccionar {{name}}',
     title: 'Gestor de archivos',
     storageUsed: 'Usado:',
     storageFree: 'Libre:',

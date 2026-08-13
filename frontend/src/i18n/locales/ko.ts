@@ -215,6 +215,8 @@ export default {
     deleteTransaction: '거래 삭제',
   },
   printers: {
+    fileAccessAvailable: '프린터 파일 접근',
+    fileAccessOfflineHint: '실시간 상태는 오프라인이지만 FTP를 통해 저장소를 계속 탐색할 수 있습니다.',
     title: '프린터',
     addPrinter: '프린터 추가',
     editPrinter: '프린터 편집',
@@ -826,6 +828,19 @@ export default {
     }
   },
   archives: {
+    media: {
+      title: '출력 동영상',
+      download: '출력 동영상 다운로드',
+      searching: '프린터에서 동영상을 확인하는 중…',
+      searchFailed: '프린터에서 동영상을 확인할 수 없습니다.',
+      none: '이 출력의 타임랩스 또는 IP 카메라 영상 조각을 찾지 못했습니다.',
+      attachedTimelapse: '첨부된 타임랩스',
+      printerFiles: '프린터에 남아 있는 파일',
+      downloadSelected: '선택 항목 다운로드',
+      printerMissing: '프린터가 더 이상 구성되어 있지 않습니다',
+      timelapseUnavailable: '타임랩스 디렉터리를 읽을 수 없습니다',
+      ipcamUnavailable: 'IP 카메라 디렉터리를 읽을 수 없습니다',
+    },
     title: '인쇄 아카이브',
     no3mfBanner: {
       title: '최근 일부 인쇄가 썸네일과 함께 아카이브되지 않았습니다',
@@ -2949,6 +2964,12 @@ export default {
     all: '전체'
   },
   printerFiles: {
+    zipStarted: '{{count}}개 파일의 ZIP 다운로드를 시작했습니다',
+    downloadFailed: '다운로드 실패: {{error}}',
+    unknownError: '알 수 없는 오류',
+    shiftSelectHint: 'Shift 키를 누른 채 클릭하여 범위 선택',
+    selectFile: '{{name}} 선택',
+    deselectFile: '{{name}} 선택 해제',
     title: '파일 관리자',
     storageUsed: '사용됨:',
     storageFree: '여유:',

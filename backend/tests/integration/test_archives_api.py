@@ -3,6 +3,7 @@
 Tests the full request/response cycle for /api/v1/archives/ endpoints.
 """
 
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -222,6 +223,67 @@ class TestArchivesAPI:
         response = await async_client.get("/api/v1/archives/9999")
 
         assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_get_archive_printer_media_matches_timelapse_and_ipcam_chunks(
+        self,
+        async_client: AsyncClient,
+        archive_factory,
+        printer_factory,
+        db_session,
+    ):
+        printer = await printer_factory()
+        archive = await archive_factory(
+            printer.id,
+            started_at=datetime(2026, 8, 12, 10, 0),
+            completed_at=datetime(2026, 8, 12, 11, 0),
+            timelapse_path=None,
+        )
+
+        async def fake_list(_ip, _code, path, **_kwargs):
+            if path == "/timelapse":
+                return [
+                    {
+                        "name": "video_2026-08-12_18-00-00.mp4",
+                        "path": "/timelapse/video_2026-08-12_18-00-00.mp4",
+                        "size": 123,
+                        "mtime": datetime(2026, 8, 12, 11, 1),
+                        "is_directory": False,
+                    }
+                ]
+            if path == "/ipcam":
+                return [
+                    {
+                        "name": "ipcam-record.1.mp4",
+                        "path": "/ipcam/ipcam-record.1.mp4",
+                        "size": 250_000_000,
+                        "mtime": datetime(2026, 8, 12, 10, 5),
+                        "is_directory": False,
+                    },
+                    {
+                        "name": "ipcam-record.after.mp4",
+                        "path": "/ipcam/ipcam-record.after.mp4",
+                        "size": 250_000_000,
+                        "mtime": datetime(2026, 8, 12, 11, 30),
+                        "is_directory": False,
+                    },
+                ]
+            return []
+
+        with patch(
+            "backend.app.services.bambu_ftp.list_files_async",
+            new=AsyncMock(side_effect=fake_list),
+        ):
+            response = await async_client.get(f"/api/v1/archives/{archive.id}/printer-media")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["local_timelapse"] is None
+        assert [(file["kind"], file["name"]) for file in data["remote_files"]] == [
+            ("timelapse", "video_2026-08-12_18-00-00.mp4"),
+            ("ipcam", "ipcam-record.1.mp4"),
+        ]
 
     # ========================================================================
     # Update endpoints

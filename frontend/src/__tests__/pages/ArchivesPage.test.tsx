@@ -309,6 +309,35 @@ describe('ArchivesPage', () => {
   });
 
   describe('timelapse management', () => {
+    it('opens print video downloads and shows matching IP camera chunks', async () => {
+      server.use(
+        http.get('/api/v1/archives/:id/printer-media', ({ params }) => {
+          return HttpResponse.json({
+            archive_id: Number(params.id),
+            printer_id: 1,
+            local_timelapse: null,
+            remote_files: [
+              {
+                name: 'ipcam-record.2024-01-01_10-05-00.1.mp4',
+                path: '/ipcam/ipcam-record.2024-01-01_10-05-00.1.mp4',
+                size: 250_000_000,
+                mtime: '2024-01-01T10:10:00Z',
+                kind: 'ipcam',
+              },
+            ],
+            warnings: [],
+          });
+        }),
+      );
+
+      render(<ArchivesPage />);
+      const mediaButtons = await screen.findAllByTitle('Download print videos');
+      fireEvent.click(mediaButtons[0]);
+
+      expect(await screen.findByText('Print videos')).toBeInTheDocument();
+      expect(await screen.findByText('ipcam-record.2024-01-01_10-05-00.1.mp4')).toBeInTheDocument();
+    });
+
     it('shows upload timelapse menu item when no timelapse attached', async () => {
       const archivesWithoutTimelapse = mockArchives.map(a => ({ ...a, timelapse_path: null }));
       server.use(

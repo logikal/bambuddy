@@ -1,13 +1,15 @@
 import asyncio
+import json
 import logging
 import re
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Query
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.background import BackgroundTask
 
 from backend.app.core import database
 from backend.app.core.auth import (
@@ -36,6 +38,7 @@ from backend.app.schemas.printer import (
     NozzleRackSlot,
     PrinterCreate,
     PrinterDiagnosticResult,
+    PrinterFilesDownloadRequest,
     PrinterResponse,
     PrinterResponseWithSecret,
     PrinterStatus,
@@ -68,6 +71,7 @@ from backend.app.services.printer_manager import (
     supports_drying_while_printing,
     uniform_tray_filament_hint,
 )
+from backend.app.services.printer_media import build_printer_files_zip, remove_printer_files_zip
 from backend.app.utils.filament_ids import filament_id_to_setting_id
 from backend.app.utils.fts_routing import slot_extruder
 from backend.app.utils.http import build_content_disposition
@@ -1910,43 +1914,72 @@ async def get_printer_file_plate_thumbnail(
 @router.post("/{printer_id}/files/download-zip")
 async def download_printer_files_as_zip(
     printer_id: int,
-    request: dict,
+    request: PrinterFilesDownloadRequest,
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
 ):
-    """Download multiple files from the printer as a ZIP archive."""
-    import io
+    """Download multiple files using a disk-backed ZIP.
 
-    paths = request.get("paths", [])
-    if not paths:
-        raise HTTPException(400, "No files specified")
+    Kept for API clients. The web UI uses the token endpoint below so the
+    browser can stream the response instead of buffering it into a Blob.
+    """
+    printer = await _load_printer_or_404(printer_id)
+    try:
+        zip_path, _ = await build_printer_files_zip(printer, request.paths)
+    except FileNotFoundError:
+        raise HTTPException(404, "No files could be downloaded")
+    return FileResponse(
+        path=zip_path,
+        filename="printer-files.zip",
+        media_type="application/zip",
+        background=BackgroundTask(remove_printer_files_zip, zip_path),
+    )
+
+
+@router.post("/{printer_id}/files/download-zip/token")
+async def create_printer_files_download_token(
+    printer_id: int,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+):
+    """Create a short-lived token for a browser-native streamed download."""
+
+    from backend.app.core.auth import create_slicer_download_token
+
+    await _load_printer_or_404(printer_id)
+    return {"token": await create_slicer_download_token("printer-files", printer_id)}
+
+
+@router.post("/{printer_id}/files/download-zip/{token}")
+async def download_printer_files_as_zip_with_token(
+    printer_id: int,
+    token: str,
+    paths: str = Form(...),
+    filename: str = Form("printer-files.zip"),
+):
+    """Consume a download token and stream the generated ZIP to the browser."""
+
+    from backend.app.core.auth import verify_slicer_download_token
+
+    if not await verify_slicer_download_token(token, "printer-files", printer_id):
+        raise HTTPException(403, "Invalid or expired download token")
+    try:
+        decoded_paths = json.loads(paths)
+        request = PrinterFilesDownloadRequest(paths=decoded_paths)
+    except Exception as exc:
+        raise HTTPException(400, "Invalid file selection") from exc
 
     printer = await _load_printer_or_404(printer_id)
-
-    # Create ZIP in memory
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in paths:
-            try:
-                data = await download_file_bytes_async(
-                    printer.ip_address, printer.access_code, path, printer_model=printer.model
-                )
-                if data:
-                    filename = path.split("/")[-1]
-                    zf.writestr(filename, data)
-            except Exception as e:
-                logging.warning("Failed to add %s to ZIP: %s", path, e)
-                continue
-
-    zip_buffer.seek(0)
-    zip_data = zip_buffer.read()
-
-    if len(zip_data) == 0:
+    try:
+        zip_path, _ = await build_printer_files_zip(printer, request.paths)
+    except FileNotFoundError:
         raise HTTPException(404, "No files could be downloaded")
-
-    return Response(
-        content=zip_data,
+    safe_filename = re.sub(r"[^a-zA-Z0-9._-]+", "_", filename).strip("._") or "printer-files.zip"
+    if not safe_filename.lower().endswith(".zip"):
+        safe_filename += ".zip"
+    return FileResponse(
+        path=zip_path,
+        filename=safe_filename[:200],
         media_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="printer-files.zip"'},
+        background=BackgroundTask(remove_printer_files_zip, zip_path),
     )
 
 

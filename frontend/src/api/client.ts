@@ -696,6 +696,22 @@ export interface ArchiveDuplicate {
   match_type: 'exact' | 'similar';  // 'exact' = hash match, 'similar' = name match
 }
 
+export interface ArchivePrinterMediaFile {
+  name: string;
+  path: string;
+  size: number;
+  mtime: string | null;
+  kind: 'timelapse' | 'ipcam';
+}
+
+export interface ArchivePrinterMedia {
+  archive_id: number;
+  printer_id: number | null;
+  local_timelapse: { name: string; size: number } | null;
+  remote_files: ArchivePrinterMediaFile[];
+  warnings: Array<'printer_missing' | 'timelapse_unavailable' | 'ipcam_unavailable'>;
+}
+
 export interface Archive {
   id: number;
   printer_id: number | null;
@@ -4726,21 +4742,37 @@ export const api = {
     document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
   },
-  downloadPrinterFilesAsZip: async (printerId: number, paths: string[]): Promise<Blob> => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (authToken) {
-      headers['Authorization'] = `Bearer ${authToken}`;
-    }
-    const response = await fetch(`${API_BASE}/printers/${printerId}/files/download-zip`, {
+  downloadPrinterFilesAsZip: async (printerId: number, paths: string[], filename = 'printer-files.zip'): Promise<void> => {
+    // A regular form submission lets the browser stream the attachment to
+    // disk. fetch()+response.blob() buffered the entire ZIP in browser memory,
+    // which is especially costly for ~250 MB /ipcam chunks.
+    const { token } = await request<{ token: string }>(`/printers/${printerId}/files/download-zip/token`, {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ paths }),
     });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.detail || `HTTP ${response.status}`);
+    const targetName = `printer-download-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const iframe = document.createElement('iframe');
+    iframe.name = targetName;
+    iframe.style.display = 'none';
+    iframe.title = 'Printer file download';
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `${API_BASE}/printers/${printerId}/files/download-zip/${encodeURIComponent(token)}`;
+    form.target = targetName;
+    form.style.display = 'none';
+    for (const [name, value] of [['paths', JSON.stringify(paths)], ['filename', filename]]) {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
     }
-    return response.blob();
+    document.body.appendChild(iframe);
+    document.body.appendChild(form);
+    form.submit();
+    form.remove();
+    // Keep the navigation target alive for very large multi-GB selections.
+    // It is invisible and will normally disappear with the page first.
+    window.setTimeout(() => iframe.remove(), 24 * 60 * 60 * 1000);
   },
   deletePrinterFile: (printerId: number, path: string) =>
     request<{ status: string; path: string }>(`/printers/${printerId}/files?path=${encodeURIComponent(path)}`, {
@@ -4994,6 +5026,8 @@ export const api = {
   getArchiveGcode: (id: number) => `${API_BASE}/archives/${id}/gcode`,
   getArchivePlatePreview: (id: number) => withStreamToken(`${API_BASE}/archives/${id}/plate-preview`),
   getArchiveTimelapse: (id: number) => withStreamToken(`${API_BASE}/archives/${id}/timelapse?v=${Date.now()}`),
+  getArchivePrinterMedia: (id: number) =>
+    request<ArchivePrinterMedia>(`/archives/${id}/printer-media`),
   scanArchiveTimelapse: (id: number) =>
     request<{
       status: string;

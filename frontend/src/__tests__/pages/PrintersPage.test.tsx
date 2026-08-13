@@ -150,6 +150,23 @@ describe('PrintersPage', () => {
         expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
       });
     });
+
+    it('offers FTP file browsing when MQTT status is offline', async () => {
+      server.use(
+        http.get('/api/v1/printers/:id/status', () => {
+          return HttpResponse.json({ ...mockPrinterStatus, connected: false });
+        }),
+      );
+
+      render(<PrintersPage />);
+
+      expect(await screen.findAllByText('Live status is offline, but storage can still be browsed over FTP.'))
+        .toHaveLength(mockPrinters.length);
+      const browseButtons = screen.getAllByRole('button', { name: /browse printer files/i });
+      await userEvent.click(browseButtons[0]);
+
+      expect(await screen.findByText('File Manager')).toBeInTheDocument();
+    });
   });
 
   describe('printer info', () => {

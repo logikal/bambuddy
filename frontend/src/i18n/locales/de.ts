@@ -221,6 +221,8 @@ export default {
 
   // Printers page
   printers: {
+    fileAccessAvailable: 'Zugriff auf Druckerdateien',
+    fileAccessOfflineHint: 'Der Live-Status ist offline, aber der Speicher kann weiterhin über FTP durchsucht werden.',
     addPreflight: {
       checking: 'Verbindung wird geprüft...',
       warning: 'Einige Verbindungsprüfungen sind fehlgeschlagen. Dieser Drucker wird möglicherweise als offline angezeigt. Prüfe die Punkte unten, behebe was möglich ist, oder speichere trotzdem.',
@@ -870,6 +872,19 @@ export default {
 
   // Archives page
   archives: {
+    media: {
+      title: 'Druckvideos',
+      download: 'Druckvideos herunterladen',
+      searching: 'Der Drucker wird nach Videos durchsucht…',
+      searchFailed: 'Der Drucker konnte nicht nach Videos durchsucht werden.',
+      none: 'Für diesen Druck wurden keine Zeitraffer- oder IP-Kamera-Clips gefunden.',
+      attachedTimelapse: 'Angehängter Zeitraffer',
+      printerFiles: 'Noch auf dem Drucker vorhandene Dateien',
+      downloadSelected: 'Auswahl herunterladen',
+      printerMissing: 'Der Drucker ist nicht mehr konfiguriert',
+      timelapseUnavailable: 'Das Zeitrafferverzeichnis konnte nicht gelesen werden',
+      ipcamUnavailable: 'Das IP-Kamera-Verzeichnis konnte nicht gelesen werden',
+    },
     title: 'Druckarchiv',
     no3mfBanner: {
       title: 'Einige kürzliche Drucke konnten nicht mit Vorschaubild archiviert werden',
@@ -3105,6 +3120,12 @@ export default {
 
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
+    zipStarted: 'ZIP-Download für {{count}} Dateien gestartet',
+    downloadFailed: 'Download fehlgeschlagen: {{error}}',
+    unknownError: 'Unbekannter Fehler',
+    shiftSelectHint: 'Umschalttaste gedrückt halten, um einen Bereich auszuwählen',
+    selectFile: '{{name}} auswählen',
+    deselectFile: 'Auswahl von {{name}} aufheben',
     title: 'Dateimanager',
     storageUsed: 'Belegt:',
     storageFree: 'Frei:',

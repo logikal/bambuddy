@@ -220,6 +220,8 @@ export default {
   },
   // Printers page
   printers: {
+    fileAccessAvailable: 'プリンターファイルへのアクセス',
+    fileAccessOfflineHint: 'ライブ状態はオフラインですが、FTP 経由でストレージを参照できます。',
     addPreflight: {
       checking: '接続を確認しています...',
       warning: '一部の接続チェックに失敗しました。このプリンターはオフラインと表示される可能性があります。下のチェックを確認し、可能な範囲で修正するか、そのまま保存してください。',
@@ -869,6 +871,19 @@ export default {
 
   // Archives page
   archives: {
+    media: {
+      title: '印刷動画',
+      download: '印刷動画をダウンロード',
+      searching: 'プリンター上の動画を確認しています…',
+      searchFailed: 'プリンター上の動画を確認できませんでした。',
+      none: 'この印刷のタイムラプスまたは IP カメラの動画断片は見つかりませんでした。',
+      attachedTimelapse: '添付済みタイムラプス',
+      printerFiles: 'プリンターに残っているファイル',
+      downloadSelected: '選択項目をダウンロード',
+      printerMissing: 'プリンターは設定から削除されています',
+      timelapseUnavailable: 'タイムラプスディレクトリを読み取れませんでした',
+      ipcamUnavailable: 'IP カメラディレクトリを読み取れませんでした',
+    },
     title: '印刷アーカイブ',
     no3mfBanner: {
       title: '最近の一部の印刷でサムネイル付きのアーカイブができませんでした',
@@ -3105,6 +3120,12 @@ export default {
 
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
+    zipStarted: '{{count}} 個のファイルの ZIP ダウンロードを開始しました',
+    downloadFailed: 'ダウンロードに失敗しました: {{error}}',
+    unknownError: '不明なエラー',
+    shiftSelectHint: 'Shift キーを押しながらクリックして範囲を選択',
+    selectFile: '{{name}} を選択',
+    deselectFile: '{{name}} の選択を解除',
     title: 'ファイル管理',
     storageUsed: '使用中:',
     storageFree: '空き:',

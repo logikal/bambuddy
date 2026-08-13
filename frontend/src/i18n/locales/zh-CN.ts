@@ -221,6 +221,8 @@ export default {
 
   // Printers page
   printers: {
+    fileAccessAvailable: '访问打印机文件',
+    fileAccessOfflineHint: '实时状态离线，但仍可通过 FTP 浏览存储空间。',
     addPreflight: {
       checking: '正在检查连接...',
       warning: '部分连接检查未通过。此打印机可能显示为离线。请查看下方的检查项，尽量修复，或仍然保存。',
@@ -870,6 +872,19 @@ export default {
 
   // Archives page
   archives: {
+    media: {
+      title: '打印视频',
+      download: '下载打印视频',
+      searching: '正在检查打印机中的视频…',
+      searchFailed: '无法检查打印机中的视频。',
+      none: '未找到此打印任务的延时摄影或 IP 摄像头视频片段。',
+      attachedTimelapse: '已附加的延时摄影',
+      printerFiles: '仍保存在打印机上的文件',
+      downloadSelected: '下载所选文件',
+      printerMissing: '打印机已不在配置中',
+      timelapseUnavailable: '无法读取延时摄影目录',
+      ipcamUnavailable: '无法读取 IP 摄像头目录',
+    },
     title: '打印归档',
     no3mfBanner: {
       title: '最近的一些打印未能附带缩略图归档',
@@ -3093,6 +3108,12 @@ export default {
 
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
+    zipStarted: '已开始下载 {{count}} 个文件的 ZIP',
+    downloadFailed: '下载失败：{{error}}',
+    unknownError: '未知错误',
+    shiftSelectHint: '按住 Shift 单击以选择范围',
+    selectFile: '选择 {{name}}',
+    deselectFile: '取消选择 {{name}}',
     title: '文件管理器',
     storageUsed: '已用：',
     storageFree: '剩余：',

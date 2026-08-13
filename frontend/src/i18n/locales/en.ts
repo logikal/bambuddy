@@ -221,6 +221,8 @@ export default {
 
   // Printers page
   printers: {
+    fileAccessAvailable: 'Printer file access',
+    fileAccessOfflineHint: 'Live status is offline, but storage can still be browsed over FTP.',
     title: 'Printers',
     addPrinter: 'Add Printer',
     addPreflight: {
@@ -875,6 +877,19 @@ export default {
 
   // Archives page
   archives: {
+    media: {
+      title: 'Print videos',
+      download: 'Download print videos',
+      searching: 'Checking the printer for videos…',
+      searchFailed: 'Could not check the printer for videos.',
+      none: 'No timelapse or IP camera chunks were found for this print.',
+      attachedTimelapse: 'Attached timelapse',
+      printerFiles: 'Files still on the printer',
+      downloadSelected: 'Download selected',
+      printerMissing: 'Printer is no longer configured',
+      timelapseUnavailable: 'The timelapse directory could not be read',
+      ipcamUnavailable: 'The IP camera directory could not be read',
+    },
     title: 'Print Archives',
     no3mfBanner: {
       title: 'Some recent prints couldn\'t be archived with thumbnails',
@@ -3135,6 +3150,12 @@ export default {
 
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
+    zipStarted: 'Started ZIP download for {{count}} files',
+    downloadFailed: 'Download failed: {{error}}',
+    unknownError: 'Unknown error',
+    shiftSelectHint: 'Shift-click to select a range',
+    selectFile: 'Select {{name}}',
+    deselectFile: 'Deselect {{name}}',
     title: 'File Manager',
     storageUsed: 'Used:',
     storageFree: 'Free:',

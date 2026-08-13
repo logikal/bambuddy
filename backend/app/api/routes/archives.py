@@ -23,6 +23,7 @@ from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
 from backend.app.models.archive import PrintArchive
 from backend.app.models.filament import Filament
+from backend.app.models.printer import Printer
 from backend.app.models.spool_usage_history import SpoolUsageHistory
 from backend.app.models.user import User
 from backend.app.schemas.archive import ArchiveResponse, ArchiveSlim, ArchiveStats, ArchiveUpdate
@@ -32,6 +33,7 @@ from backend.app.services.archive import ArchiveService
 from backend.app.services.design_settings import overrides_from_config
 from backend.app.services.filament_requirements import annotate_rack_groups
 from backend.app.services.print_storage import REASON_INTERNAL_STORAGE, REASON_NO_EXTERNAL_STORAGE
+from backend.app.services.printer_media import VIDEO_SUFFIXES, match_ipcam_chunks
 from backend.app.utils.archive_paths import archive_photos_dir, find_archive_photo
 from backend.app.utils.http import build_content_disposition
 from backend.app.utils.threemf_tools import (
@@ -2290,6 +2292,110 @@ async def get_thumbnail(
             "ETag": f'"{mtime}"',
         },
     )
+
+
+@router.get("/{archive_id}/printer-media")
+async def get_archive_printer_media(
+    archive_id: int,
+    db: AsyncSession = Depends(get_db),
+    auth_result: tuple[User | None, bool] = Depends(
+        require_ownership_permission(
+            Permission.ARCHIVES_READ_ALL,
+            Permission.ARCHIVES_READ_OWN,
+        )
+    ),
+):
+    """Find downloadable timelapse and `/ipcam` files for one print.
+
+    Local attached timelapses are returned without touching the printer.
+    Printer directories are listed read-only; files are downloaded only after
+    the user explicitly selects them in the UI.
+    """
+
+    from backend.app.services.bambu_ftp import list_files_async
+
+    user, can_read_all = auth_result
+    archive = _ensure_archive_visible(await ArchiveService(db).get_archive(archive_id), user, can_read_all)
+
+    local_timelapse = None
+    if archive.timelapse_path:
+        local_path = settings.base_dir / archive.timelapse_path
+        if local_path.is_file():
+            local_timelapse = {
+                "name": local_path.name,
+                "size": local_path.stat().st_size,
+            }
+
+    response = {
+        "archive_id": archive.id,
+        "printer_id": archive.printer_id,
+        "local_timelapse": local_timelapse,
+        "remote_files": [],
+        "warnings": [],
+    }
+    if archive.printer_id is None or archive.started_at is None:
+        return response
+
+    printer = (await db.execute(select(Printer).where(Printer.id == archive.printer_id))).scalar_one_or_none()
+    if printer is None:
+        response["warnings"].append("printer_missing")
+        return response
+
+    remote_files: list[dict] = []
+
+    # If no copy was attached to the archive, offer the matching printer-side
+    # timelapse without mutating the archive or deleting anything from the SD.
+    if local_timelapse is None:
+        try:
+            listed = await list_files_async(
+                printer.ip_address,
+                printer.access_code,
+                "/timelapse",
+                printer_model=printer.model,
+            )
+            videos = [
+                file
+                for file in listed
+                if not file.get("is_directory") and str(file.get("name") or "").lower().endswith(VIDEO_SUFFIXES)
+            ]
+            candidate, _ = _match_timelapse_by_timestamp(videos, archive.started_at)
+            if candidate is not None:
+                remote_files.append(
+                    {
+                        "name": candidate.get("name"),
+                        "path": candidate.get("path") or f"/timelapse/{candidate.get('name')}",
+                        "size": candidate.get("size") or 0,
+                        "mtime": candidate.get("mtime"),
+                        "kind": "timelapse",
+                    }
+                )
+        except Exception as exc:
+            logger.info("Could not list printer timelapses for archive %s: %s", archive_id, exc)
+            response["warnings"].append("timelapse_unavailable")
+
+    try:
+        ipcam_files = await list_files_async(
+            printer.ip_address,
+            printer.access_code,
+            "/ipcam",
+            printer_model=printer.model,
+        )
+        for file in match_ipcam_chunks(ipcam_files, archive.started_at, archive.completed_at):
+            remote_files.append(
+                {
+                    "name": file.get("name"),
+                    "path": file.get("path") or f"/ipcam/{file.get('name')}",
+                    "size": file.get("size") or 0,
+                    "mtime": file.get("mtime"),
+                    "kind": "ipcam",
+                }
+            )
+    except Exception as exc:
+        logger.info("Could not list ipcam chunks for archive %s: %s", archive_id, exc)
+        response["warnings"].append("ipcam_unavailable")
+
+    response["remote_files"] = remote_files
+    return response
 
 
 @router.get("/{archive_id}/timelapse")

@@ -219,6 +219,37 @@ describe('FileManagerModal', () => {
       }
     });
 
+    it('selects the visible range between a click and a shift-click', async () => {
+      server.use(
+        http.get('/api/v1/printers/:id/files', () => HttpResponse.json({
+          files: [
+            ...mockFiles.filter(file => file.is_directory),
+            { name: 'alpha.gcode', path: '/alpha.gcode', size: 1, is_directory: false, mtime: null },
+            { name: 'bravo.gcode', path: '/bravo.gcode', size: 2, is_directory: false, mtime: null },
+            { name: 'charlie.gcode', path: '/charlie.gcode', size: 3, is_directory: false, mtime: null },
+            { name: 'delta.gcode', path: '/delta.gcode', size: 4, is_directory: false, mtime: null },
+          ],
+        })),
+      );
+
+      render(
+        <FileManagerModal
+          printerId={1}
+          printerName="X1 Carbon"
+          onClose={mockOnClose}
+        />
+      );
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Select alpha.gcode' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Select charlie.gcode' }), { shiftKey: true });
+
+      expect(await screen.findByText('3 selected')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Deselect alpha.gcode' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Deselect bravo.gcode' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Deselect charlie.gcode' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Select delta.gcode' })).toBeInTheDocument();
+    });
+
     it('enables download button when files are selected', async () => {
       render(
         <FileManagerModal
@@ -249,6 +280,43 @@ describe('FileManagerModal', () => {
       await waitFor(() => {
         expect(screen.getByText('Select All')).toBeInTheDocument();
       });
+    });
+
+    it('starts multi-file downloads with a browser form instead of buffering a Blob', async () => {
+      server.use(
+        http.post('/api/v1/printers/:id/files/download-zip/token', () => {
+          return HttpResponse.json({ token: 'download-token' });
+        }),
+      );
+      let submitted: { action: string; paths: string[]; filename: string } | null = null;
+      const submitSpy = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function () {
+        const fields = new FormData(this);
+        submitted = {
+          action: this.action,
+          paths: JSON.parse(String(fields.get('paths'))),
+          filename: String(fields.get('filename')),
+        };
+      });
+
+      render(
+        <FileManagerModal
+          printerId={1}
+          printerName="X1 Carbon"
+          onClose={mockOnClose}
+        />
+      );
+
+      await waitFor(() => expect(screen.getByText('Select All')).toBeInTheDocument());
+      fireEvent.click(screen.getByText('Select All'));
+      fireEvent.click(screen.getByRole('button', { name: /Download \(2\)/i }));
+
+      await waitFor(() => expect(submitSpy).toHaveBeenCalledOnce());
+      expect(submitted).toMatchObject({
+        paths: ['/benchy.3mf', '/print_job.gcode'],
+        filename: 'X1_Carbon-files.zip',
+      });
+      expect(submitted!.action).toContain('/api/v1/printers/1/files/download-zip/download-token');
+      submitSpy.mockRestore();
     });
   });
 

@@ -221,6 +221,8 @@ export default {
 
   // Printers page
   printers: {
+    fileAccessAvailable: 'Accès aux fichiers de l’imprimante',
+    fileAccessOfflineHint: 'L’état en direct est hors ligne, mais le stockage reste accessible via FTP.',
     addPreflight: {
       checking: 'Vérification de la connexion...',
       warning: 'Certaines vérifications de connexion ont échoué. Cette imprimante pourrait apparaître hors ligne. Examinez les vérifications ci-dessous, corrigez ce que vous pouvez, ou enregistrez quand même.',
@@ -870,6 +872,19 @@ export default {
 
   // Archives page
   archives: {
+    media: {
+      title: 'Vidéos d’impression',
+      download: 'Télécharger les vidéos d’impression',
+      searching: 'Recherche de vidéos sur l’imprimante…',
+      searchFailed: 'Impossible de rechercher les vidéos sur l’imprimante.',
+      none: 'Aucun timelapse ni segment de caméra IP n’a été trouvé pour cette impression.',
+      attachedTimelapse: 'Timelapse joint',
+      printerFiles: 'Fichiers encore présents sur l’imprimante',
+      downloadSelected: 'Télécharger la sélection',
+      printerMissing: 'L’imprimante n’est plus configurée',
+      timelapseUnavailable: 'Impossible de lire le dossier des timelapses',
+      ipcamUnavailable: 'Impossible de lire le dossier de la caméra IP',
+    },
     title: 'Archives d\'impression',
     no3mfBanner: {
       title: 'Certaines impressions récentes n\'ont pas pu être archivées avec leur miniature',
@@ -3094,6 +3109,12 @@ export default {
 
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
+    zipStarted: 'Téléchargement ZIP de {{count}} fichiers démarré',
+    downloadFailed: 'Échec du téléchargement : {{error}}',
+    unknownError: 'Erreur inconnue',
+    shiftSelectHint: 'Maj-clic pour sélectionner une plage',
+    selectFile: 'Sélectionner {{name}}',
+    deselectFile: 'Désélectionner {{name}}',
     title: 'Gestionnaire de fichiers',
     storageUsed: 'Utilisé :',
     storageFree: 'Libre :',

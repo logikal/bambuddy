@@ -358,6 +358,49 @@ class TestPrintersAPI:
         encoded_name = content_disposition.split("filename*=UTF-8''", 1)[1]
         assert unquote(encoded_name) == filename
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_bulk_download_token_streams_file_response(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+        tmp_path,
+    ):
+        """The browser token flow returns an attachment without a Blob API."""
+        printer = await printer_factory()
+        zip_path = tmp_path / "printer-files.zip"
+        zip_path.write_bytes(b"disk-backed zip")
+
+        token_response = await async_client.post(f"/api/v1/printers/{printer.id}/files/download-zip/token")
+        assert token_response.status_code == 200
+        token = token_response.json()["token"]
+
+        with (
+            patch(
+                "backend.app.api.routes.printers.build_printer_files_zip",
+                new=AsyncMock(return_value=(zip_path, 2)),
+            ),
+            patch("backend.app.api.routes.printers.remove_printer_files_zip"),
+        ):
+            response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/files/download-zip/{token}",
+                data={
+                    "paths": '["/ipcam/one.mp4", "/ipcam/two.mp4"]',
+                    "filename": "Test Printer videos.zip",
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.content == b"disk-backed zip"
+        assert 'filename="Test_Printer_videos.zip"' in response.headers["content-disposition"]
+
+        # Tokens are single-use, including after a successful large download.
+        replay = await async_client.post(
+            f"/api/v1/printers/{printer.id}/files/download-zip/{token}",
+            data={"paths": '["/ipcam/one.mp4"]'},
+        )
+        assert replay.status_code == 403
+
     # ========================================================================
     # Status endpoint
     # ========================================================================
