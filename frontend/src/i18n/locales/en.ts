@@ -221,8 +221,6 @@ export default {
 
   // Printers page
   printers: {
-    fileAccessAvailable: 'Printer file access',
-    fileAccessOfflineHint: 'Live status is offline, but storage can still be browsed over FTP.',
     title: 'Printers',
     addPrinter: 'Add Printer',
     addPreflight: {
@@ -3151,6 +3149,7 @@ export default {
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
     zipStarted: 'Started ZIP download for {{count}} files',
+    zipPartial: 'ZIP download started with {{successful}} of {{total}} files; the rest could not be retrieved',
     downloadFailed: 'Download failed: {{error}}',
     unknownError: 'Unknown error',
     shiftSelectHint: 'Shift-click to select a range',

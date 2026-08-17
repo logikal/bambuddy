@@ -221,8 +221,6 @@ export default {
 
   // Printers page
   printers: {
-    fileAccessAvailable: 'Accesso ai file della stampante',
-    fileAccessOfflineHint: 'Lo stato in tempo reale è offline, ma è ancora possibile esplorare l’archivio tramite FTP.',
     addPreflight: {
       checking: 'Verifica della connessione...',
       warning: 'Alcuni controlli di connessione non sono riusciti. Questa stampante potrebbe risultare offline. Controlla le verifiche qui sotto, risolvi ciò che puoi oppure salva comunque.',
@@ -3109,6 +3107,7 @@ export default {
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
     zipStarted: 'Download ZIP avviato per {{count}} file',
+    zipPartial: 'Download ZIP avviato con {{successful}} file su {{total}}; non è stato possibile recuperare gli altri',
     downloadFailed: 'Download non riuscito: {{error}}',
     unknownError: 'Errore sconosciuto',
     shiftSelectHint: 'Maiusc-clic per selezionare un intervallo',

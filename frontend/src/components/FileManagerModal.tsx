@@ -394,13 +394,9 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
       const targetIndex = selectablePaths.indexOf(path);
 
       if (shiftKey && anchorIndex !== -1 && targetIndex !== -1) {
-        const shouldSelect = !next.has(path);
         const start = Math.min(anchorIndex, targetIndex);
         const end = Math.max(anchorIndex, targetIndex);
-        selectablePaths.slice(start, end + 1).forEach(rangePath => {
-          if (shouldSelect) next.add(rangePath);
-          else next.delete(rangePath);
-        });
+        selectablePaths.slice(start, end + 1).forEach(rangePath => next.add(rangePath));
       } else {
         if (next.has(path)) next.delete(path);
         else next.add(path);
@@ -442,12 +438,24 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
     // Multiple files - download as ZIP
     setDownloadProgress({ current: 0, total: paths.length });
     try {
-      await api.downloadPrinterFilesAsZip(
+      const sizes = Object.fromEntries(paths.map(path => [
+        path,
+        data?.files.find(file => file.path === path)?.size ?? 0,
+      ]));
+      const result = await api.downloadPrinterFilesAsZip(
         printerId,
         paths,
+        sizes,
         `${printerName.replace(/[^a-zA-Z0-9]/g, '_')}-files.zip`,
       );
-      showToast(t('printerFiles.zipStarted', { count: paths.length }));
+      if (result.failed > 0) {
+        showToast(t('printerFiles.zipPartial', {
+          successful: result.successful,
+          total: result.requested,
+        }), 'warning');
+      } else {
+        showToast(t('printerFiles.zipStarted', { count: result.successful }));
+      }
       setSelectedFiles(new Set());
       selectionAnchorRef.current = null;
     } catch (error) {

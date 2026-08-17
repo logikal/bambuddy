@@ -6354,34 +6354,6 @@ function PrinterCard({
           expandedClearPlateButton
         )}
 
-        {/* MQTT and FTPS are independent services on Bambu printers. Keep a
-            clear file-browser entry point when live MQTT status is offline;
-            this is especially useful for isolated development instances that
-            intentionally suppress automatic MQTT connections. */}
-        {printer.is_active !== false && !status?.connected && viewMode === 'expanded' && (
-          <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-bambu-dark-tertiary bg-bambu-dark p-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-white">
-                {t('printers.fileAccessAvailable')}
-              </p>
-              <p className="text-xs text-bambu-gray">
-                {t('printers.fileAccessOfflineHint')}
-              </p>
-            </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setShowFileManager(true)}
-              disabled={!hasPermission('printers:files')}
-              title={!hasPermission('printers:files') ? t('printers.permission.noFiles') : undefined}
-              className="shrink-0"
-            >
-              <HardDrive className="w-4 h-4" />
-              {t('printers.browseFiles')}
-            </Button>
-          </div>
-        )}
-
         {/* Bottom block (power row + action bar). Wrapped together so the
             power row hugs the action bar at the card bottom instead of
             floating up when there's less filament content above. */}

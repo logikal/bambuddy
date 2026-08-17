@@ -30,6 +30,7 @@ from backend.app.schemas.archive import ArchiveResponse, ArchiveSlim, ArchiveSta
 from backend.app.schemas.print_log import PrintLogResponse
 from backend.app.schemas.slicer import SliceRequest
 from backend.app.services.archive import ArchiveService
+from backend.app.services.bambu_ftp import ftps_handshake_blocked, list_files_async
 from backend.app.services.design_settings import overrides_from_config
 from backend.app.services.filament_requirements import annotate_rack_groups
 from backend.app.services.print_storage import REASON_INTERNAL_STORAGE, REASON_NO_EXTERNAL_STORAGE
@@ -48,6 +49,7 @@ from backend.app.utils.threemf_tools import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/archives", tags=["archives"])
+_PRINTER_MEDIA_LIST_TIMEOUT_SECONDS = 8.0
 
 # Path of the embedded slicer config inside a BambuStudio/OrcaSlicer 3MF.
 _PROJECT_SETTINGS_PATH = "Metadata/project_settings.config"
@@ -2304,15 +2306,15 @@ async def get_archive_printer_media(
             Permission.ARCHIVES_READ_OWN,
         )
     ),
+    _files_user: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
 ):
     """Find downloadable timelapse and `/ipcam` files for one print.
 
     Local attached timelapses are returned without touching the printer.
-    Printer directories are listed read-only; files are downloaded only after
-    the user explicitly selects them in the UI.
+    Printer directories are listed read-only and therefore also require
+    ``printers:files``; files are downloaded only after the user explicitly
+    selects them in the UI.
     """
-
-    from backend.app.services.bambu_ftp import list_files_async
 
     user, can_read_all = auth_result
     archive = _ensure_archive_visible(await ArchiveService(db).get_archive(archive_id), user, can_read_all)
@@ -2341,6 +2343,12 @@ async def get_archive_printer_media(
         response["warnings"].append("printer_missing")
         return response
 
+    if ftps_handshake_blocked(printer.ip_address):
+        if local_timelapse is None:
+            response["warnings"].append("timelapse_unavailable")
+        response["warnings"].append("ipcam_unavailable")
+        return response
+
     remote_files: list[dict] = []
 
     # If no copy was attached to the archive, offer the matching printer-side
@@ -2351,6 +2359,7 @@ async def get_archive_printer_media(
                 printer.ip_address,
                 printer.access_code,
                 "/timelapse",
+                timeout=_PRINTER_MEDIA_LIST_TIMEOUT_SECONDS,
                 printer_model=printer.model,
             )
             videos = [
@@ -2373,11 +2382,17 @@ async def get_archive_printer_media(
             logger.info("Could not list printer timelapses for archive %s: %s", archive_id, exc)
             response["warnings"].append("timelapse_unavailable")
 
+    if ftps_handshake_blocked(printer.ip_address):
+        response["warnings"].append("ipcam_unavailable")
+        response["remote_files"] = remote_files
+        return response
+
     try:
         ipcam_files = await list_files_async(
             printer.ip_address,
             printer.access_code,
             "/ipcam",
+            timeout=_PRINTER_MEDIA_LIST_TIMEOUT_SECONDS,
             printer_model=printer.model,
         )
         for file in match_ipcam_chunks(ipcam_files, archive.started_at, archive.completed_at):

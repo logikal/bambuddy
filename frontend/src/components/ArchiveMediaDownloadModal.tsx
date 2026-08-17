@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { CheckSquare, Download, Film, Loader2, Square, Video, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../api/client';
+import { useToast } from '../contexts/ToastContext';
 import { formatFileSize } from '../utils/file';
 import { Button } from './Button';
 
@@ -20,6 +21,7 @@ export function ArchiveMediaDownloadModal({
   onClose,
 }: ArchiveMediaDownloadModalProps) {
   const { t } = useTranslation();
+  const { showToast } = useToast();
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [downloadStarting, setDownloadStarting] = useState(false);
   const mediaQuery = useQuery({
@@ -57,18 +59,34 @@ export function ArchiveMediaDownloadModal({
     const link = document.createElement('a');
     link.href = api.getArchiveTimelapse(archiveId);
     link.download = `${archiveName}_timelapse`;
+    document.body.appendChild(link);
     link.click();
+    link.remove();
   };
 
   const downloadSelected = async () => {
     if (!mediaQuery.data?.printer_id || selectedPaths.size === 0) return;
     setDownloadStarting(true);
     try {
-      await api.downloadPrinterFilesAsZip(
+      const selectedFiles = remoteFiles.filter(file => selectedPaths.has(file.path));
+      const result = await api.downloadPrinterFilesAsZip(
         mediaQuery.data.printer_id,
-        Array.from(selectedPaths),
+        selectedFiles.map(file => file.path),
+        Object.fromEntries(selectedFiles.map(file => [file.path, file.size])),
         `${archiveName.replace(/[^a-zA-Z0-9]/g, '_')}-printer-videos.zip`,
       );
+      if (result.failed > 0) {
+        showToast(t('printerFiles.zipPartial', {
+          successful: result.successful,
+          total: result.requested,
+        }), 'warning');
+      } else {
+        showToast(t('printerFiles.zipStarted', { count: result.successful }));
+      }
+    } catch (error) {
+      showToast(t('printerFiles.downloadFailed', {
+        error: error instanceof Error ? error.message : t('printerFiles.unknownError'),
+      }), 'error');
     } finally {
       setDownloadStarting(false);
     }

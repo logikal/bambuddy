@@ -221,8 +221,6 @@ export default {
 
   // Printers page
   printers: {
-    fileAccessAvailable: 'Accès aux fichiers de l’imprimante',
-    fileAccessOfflineHint: 'L’état en direct est hors ligne, mais le stockage reste accessible via FTP.',
     addPreflight: {
       checking: 'Vérification de la connexion...',
       warning: 'Certaines vérifications de connexion ont échoué. Cette imprimante pourrait apparaître hors ligne. Examinez les vérifications ci-dessous, corrigez ce que vous pouvez, ou enregistrez quand même.',
@@ -3110,6 +3108,7 @@ export default {
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
     zipStarted: 'Téléchargement ZIP de {{count}} fichiers démarré',
+    zipPartial: 'Le téléchargement ZIP a démarré avec {{successful}} fichiers sur {{total}} ; les autres n’ont pas pu être récupérés',
     downloadFailed: 'Échec du téléchargement : {{error}}',
     unknownError: 'Erreur inconnue',
     shiftSelectHint: 'Maj-clic pour sélectionner une plage',

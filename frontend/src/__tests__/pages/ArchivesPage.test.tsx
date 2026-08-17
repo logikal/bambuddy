@@ -338,6 +338,34 @@ describe('ArchivesPage', () => {
       expect(await screen.findByText('ipcam-record.2024-01-01_10-05-00.1.mp4')).toBeInTheDocument();
     });
 
+    it('shows a toast when printer video ZIP preparation fails', async () => {
+      server.use(
+        http.get('/api/v1/archives/:id/printer-media', ({ params }) => HttpResponse.json({
+          archive_id: Number(params.id),
+          printer_id: 1,
+          local_timelapse: null,
+          remote_files: [{
+            name: 'ipcam-record.1.mp4',
+            path: '/ipcam/ipcam-record.1.mp4',
+            size: 250_000_000,
+            mtime: '2024-01-01T10:10:00Z',
+            kind: 'ipcam',
+          }],
+          warnings: [],
+        })),
+        http.post('/api/v1/printers/:id/files/zip-token', () => HttpResponse.json(
+          { detail: 'Not enough app data volume space' },
+          { status: 507 },
+        )),
+      );
+
+      render(<ArchivesPage />);
+      fireEvent.click((await screen.findAllByTitle('Download print videos'))[0]);
+      fireEvent.click(await screen.findByRole('button', { name: /Download selected \(1\)/i }));
+
+      expect(await screen.findByText('Download failed: Not enough app data volume space')).toBeInTheDocument();
+    });
+
     it('shows upload timelapse menu item when no timelapse attached', async () => {
       const archivesWithoutTimelapse = mockArchives.map(a => ({ ...a, timelapse_path: null }));
       server.use(

@@ -221,8 +221,6 @@ export default {
 
   // Printers page
   printers: {
-    fileAccessAvailable: 'Доступ до файлів принтера',
-    fileAccessOfflineHint: 'Поточний стан недоступний, але сховище все ще можна переглядати через FTP.',
     title: "Принтери",
     addPrinter: "Додати принтер",
     addPreflight: {
@@ -3149,6 +3147,7 @@ export default {
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
     zipStarted: 'Розпочато завантаження ZIP для {{count}} файлів',
+    zipPartial: 'Розпочато завантаження ZIP із {{successful}} з {{total}} файлів; решту отримати не вдалося',
     downloadFailed: 'Помилка завантаження: {{error}}',
     unknownError: 'Невідома помилка',
     shiftSelectHint: 'Клацніть із Shift, щоб вибрати діапазон',

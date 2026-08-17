@@ -241,7 +241,10 @@ class TestArchivesAPI:
             timelapse_path=None,
         )
 
-        async def fake_list(_ip, _code, path, **_kwargs):
+        list_timeouts = []
+
+        async def fake_list(_ip, _code, path, **kwargs):
+            list_timeouts.append(kwargs.get("timeout"))
             if path == "/timelapse":
                 return [
                     {
@@ -271,9 +274,9 @@ class TestArchivesAPI:
                 ]
             return []
 
-        with patch(
-            "backend.app.services.bambu_ftp.list_files_async",
-            new=AsyncMock(side_effect=fake_list),
+        with (
+            patch("backend.app.api.routes.archives.list_files_async", new=AsyncMock(side_effect=fake_list)),
+            patch("backend.app.api.routes.archives.ftps_handshake_blocked", return_value=False),
         ):
             response = await async_client.get(f"/api/v1/archives/{archive.id}/printer-media")
 
@@ -284,6 +287,86 @@ class TestArchivesAPI:
             ("timelapse", "video_2026-08-12_18-00-00.mp4"),
             ("ipcam", "ipcam-record.1.mp4"),
         ]
+        assert list_timeouts == [8.0, 8.0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_archive_printer_media_skips_ftp_during_handshake_cooloff(
+        self,
+        async_client: AsyncClient,
+        archive_factory,
+        printer_factory,
+    ):
+        printer = await printer_factory()
+        archive = await archive_factory(
+            printer.id,
+            started_at=datetime(2026, 8, 12, 10, 0),
+            completed_at=datetime(2026, 8, 12, 11, 0),
+            timelapse_path=None,
+        )
+        list_files = AsyncMock()
+
+        with (
+            patch("backend.app.api.routes.archives.ftps_handshake_blocked", return_value=True),
+            patch("backend.app.api.routes.archives.list_files_async", new=list_files),
+        ):
+            response = await async_client.get(f"/api/v1/archives/{archive.id}/printer-media")
+
+        assert response.status_code == 200
+        assert response.json()["remote_files"] == []
+        assert response.json()["warnings"] == ["timelapse_unavailable", "ipcam_unavailable"]
+        list_files.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_archive_printer_media_requires_printer_files_permission(
+        self,
+        async_client: AsyncClient,
+        archive_factory,
+        printer_factory,
+    ):
+        printer = await printer_factory()
+        archive = await archive_factory(printer.id, started_at=datetime(2026, 8, 12, 10, 0))
+        setup = await async_client.post(
+            "/api/v1/auth/setup",
+            json={
+                "auth_enabled": True,
+                "admin_username": "mediaadmin",
+                "admin_password": "AdminPass1!",
+            },
+        )
+        assert setup.status_code == 200, setup.text
+        admin_login = await async_client.post(
+            "/api/v1/auth/login",
+            json={"username": "mediaadmin", "password": "AdminPass1!"},
+        )
+        admin_headers = {"Authorization": f"Bearer {admin_login.json()['access_token']}"}
+        group = await async_client.post(
+            "/api/v1/groups/",
+            headers=admin_headers,
+            json={"name": "archive-only-media", "permissions": ["archives:read_all"]},
+        )
+        assert group.status_code == 201, group.text
+        user = await async_client.post(
+            "/api/v1/users/",
+            headers=admin_headers,
+            json={
+                "username": "archiveonlymedia",
+                "password": "ArchivePass1!",
+                "group_ids": [group.json()["id"]],
+            },
+        )
+        assert user.status_code == 201, user.text
+        login = await async_client.post(
+            "/api/v1/auth/login",
+            json={"username": "archiveonlymedia", "password": "ArchivePass1!"},
+        )
+
+        response = await async_client.get(
+            f"/api/v1/archives/{archive.id}/printer-media",
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        )
+        assert response.status_code == 403
 
     # ========================================================================
     # Update endpoints

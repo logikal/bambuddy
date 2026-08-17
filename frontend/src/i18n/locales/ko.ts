@@ -215,8 +215,6 @@ export default {
     deleteTransaction: '거래 삭제',
   },
   printers: {
-    fileAccessAvailable: '프린터 파일 접근',
-    fileAccessOfflineHint: '실시간 상태는 오프라인이지만 FTP를 통해 저장소를 계속 탐색할 수 있습니다.',
     title: '프린터',
     addPrinter: '프린터 추가',
     editPrinter: '프린터 편집',
@@ -2965,6 +2963,7 @@ export default {
   },
   printerFiles: {
     zipStarted: '{{count}}개 파일의 ZIP 다운로드를 시작했습니다',
+    zipPartial: '{{total}}개 중 {{successful}}개 파일로 ZIP 다운로드를 시작했습니다. 나머지는 가져오지 못했습니다',
     downloadFailed: '다운로드 실패: {{error}}',
     unknownError: '알 수 없는 오류',
     shiftSelectHint: 'Shift 키를 누른 채 클릭하여 범위 선택',

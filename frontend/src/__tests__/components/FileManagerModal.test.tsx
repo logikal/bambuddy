@@ -250,6 +250,33 @@ describe('FileManagerModal', () => {
       expect(screen.getByRole('button', { name: 'Select delta.gcode' })).toBeInTheDocument();
     });
 
+    it('always selects a shift-clicked range even when the target is already selected', async () => {
+      server.use(
+        http.get('/api/v1/printers/:id/files', () => HttpResponse.json({
+          files: [
+            { name: 'alpha.gcode', path: '/alpha.gcode', size: 1, is_directory: false, mtime: null },
+            { name: 'bravo.gcode', path: '/bravo.gcode', size: 2, is_directory: false, mtime: null },
+            { name: 'charlie.gcode', path: '/charlie.gcode', size: 3, is_directory: false, mtime: null },
+          ],
+        })),
+      );
+
+      render(
+        <FileManagerModal
+          printerId={1}
+          printerName="X1 Carbon"
+          onClose={mockOnClose}
+        />
+      );
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Select alpha.gcode' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Select charlie.gcode' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Deselect alpha.gcode' }), { shiftKey: true });
+
+      expect(await screen.findByText('3 selected')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Deselect bravo.gcode' })).toBeInTheDocument();
+    });
+
     it('enables download button when files are selected', async () => {
       render(
         <FileManagerModal
@@ -282,18 +309,24 @@ describe('FileManagerModal', () => {
       });
     });
 
-    it('starts multi-file downloads with a browser form instead of buffering a Blob', async () => {
+    it('starts multi-file downloads with a browser form and reports partial preparation', async () => {
+      let preparation: { paths: string[]; sizes: Record<string, number> } | null = null;
       server.use(
-        http.post('/api/v1/printers/:id/files/download-zip/token', () => {
-          return HttpResponse.json({ token: 'download-token' });
+        http.post('/api/v1/printers/:id/files/zip-token', async ({ request }) => {
+          preparation = await request.json() as { paths: string[]; sizes: Record<string, number> };
+          return HttpResponse.json({
+            token: 'download-token',
+            requested: 2,
+            successful: 1,
+            failed: 1,
+          });
         }),
       );
-      let submitted: { action: string; paths: string[]; filename: string } | null = null;
+      let submitted: { action: string; filename: string } | null = null;
       const submitSpy = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function () {
         const fields = new FormData(this);
         submitted = {
           action: this.action,
-          paths: JSON.parse(String(fields.get('paths'))),
           filename: String(fields.get('filename')),
         };
       });
@@ -311,11 +344,20 @@ describe('FileManagerModal', () => {
       fireEvent.click(screen.getByRole('button', { name: /Download \(2\)/i }));
 
       await waitFor(() => expect(submitSpy).toHaveBeenCalledOnce());
-      expect(submitted).toMatchObject({
+      expect(preparation).toEqual({
         paths: ['/benchy.3mf', '/print_job.gcode'],
+        sizes: {
+          '/benchy.3mf': 1048575,
+          '/print_job.gcode': 2048000,
+        },
+      });
+      expect(submitted).toMatchObject({
         filename: 'X1_Carbon-files.zip',
       });
       expect(submitted!.action).toContain('/api/v1/printers/1/files/download-zip/download-token');
+      expect(await screen.findByText(
+        'ZIP download started with 1 of 2 files; the rest could not be retrieved',
+      )).toBeInTheDocument();
       submitSpy.mockRestore();
     });
   });

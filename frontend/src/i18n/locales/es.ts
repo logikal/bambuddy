@@ -221,8 +221,6 @@ export default {
 
   // Printers page
   printers: {
-    fileAccessAvailable: 'Acceso a archivos de la impresora',
-    fileAccessOfflineHint: 'El estado en vivo está sin conexión, pero aún se puede explorar el almacenamiento mediante FTP.',
     addPreflight: {
       checking: 'Comprobando la conexión...',
       warning: 'Algunas comprobaciones de conexión fallaron. Esta impresora podría aparecer como desconectada. Revisa las comprobaciones de abajo, soluciona lo que puedas o guárdala de todos modos.',
@@ -3123,6 +3121,7 @@ export default {
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
     zipStarted: 'Se inició la descarga ZIP de {{count}} archivos',
+    zipPartial: 'La descarga ZIP comenzó con {{successful}} de {{total}} archivos; no se pudieron recuperar los demás',
     downloadFailed: 'Error de descarga: {{error}}',
     unknownError: 'Error desconocido',
     shiftSelectHint: 'Mayús-clic para seleccionar un intervalo',

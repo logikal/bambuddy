@@ -215,8 +215,6 @@ export default {
     deleteTransaction: "Удалить операцию",
   },
   printers: {
-    fileAccessAvailable: 'Доступ к файлам принтера',
-    fileAccessOfflineHint: 'Текущий статус недоступен, но хранилище всё ещё можно просматривать по FTP.',
     title: "Принтеры",
     addPrinter: "Добавить принтер",
     addPreflight: {
@@ -2957,6 +2955,7 @@ export default {
   },
   printerFiles: {
     zipStarted: 'Начато скачивание ZIP для {{count}} файлов',
+    zipPartial: 'Начато скачивание ZIP с {{successful}} из {{total}} файлов; остальные получить не удалось',
     downloadFailed: 'Ошибка скачивания: {{error}}',
     unknownError: 'Неизвестная ошибка',
     shiftSelectHint: 'Щёлкните с Shift, чтобы выбрать диапазон',

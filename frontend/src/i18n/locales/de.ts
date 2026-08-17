@@ -221,8 +221,6 @@ export default {
 
   // Printers page
   printers: {
-    fileAccessAvailable: 'Zugriff auf Druckerdateien',
-    fileAccessOfflineHint: 'Der Live-Status ist offline, aber der Speicher kann weiterhin über FTP durchsucht werden.',
     addPreflight: {
       checking: 'Verbindung wird geprüft...',
       warning: 'Einige Verbindungsprüfungen sind fehlgeschlagen. Dieser Drucker wird möglicherweise als offline angezeigt. Prüfe die Punkte unten, behebe was möglich ist, oder speichere trotzdem.',
@@ -3121,6 +3119,7 @@ export default {
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
     zipStarted: 'ZIP-Download für {{count}} Dateien gestartet',
+    zipPartial: 'ZIP-Download mit {{successful}} von {{total}} Dateien gestartet; die übrigen konnten nicht abgerufen werden',
     downloadFailed: 'Download fehlgeschlagen: {{error}}',
     unknownError: 'Unbekannter Fehler',
     shiftSelectHint: 'Umschalttaste gedrückt halten, um einen Bereich auszuwählen',

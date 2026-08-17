@@ -221,8 +221,6 @@ export default {
 
   // Printers page
   printers: {
-    fileAccessAvailable: '访问打印机文件',
-    fileAccessOfflineHint: '实时状态离线，但仍可通过 FTP 浏览存储空间。',
     addPreflight: {
       checking: '正在检查连接...',
       warning: '部分连接检查未通过。此打印机可能显示为离线。请查看下方的检查项，尽量修复，或仍然保存。',
@@ -3109,6 +3107,7 @@ export default {
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
     zipStarted: '已开始下载 {{count}} 个文件的 ZIP',
+    zipPartial: '已开始下载 ZIP，共 {{total}} 个文件中成功获取 {{successful}} 个，其余文件无法获取',
     downloadFailed: '下载失败：{{error}}',
     unknownError: '未知错误',
     shiftSelectHint: '按住 Shift 单击以选择范围',

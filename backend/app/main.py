@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import posixpath
+import re
 import secrets
 import time
 from contextlib import asynccontextmanager
@@ -8655,13 +8656,17 @@ PUBLIC_API_PATTERNS = [
     # orcaslicer://) cannot send auth headers. These endpoints validate a short-lived
     # download token in the URL path instead.
     "/dl/",  # /archives/{id}/dl/{token}/{filename}, /library/files/{id}/dl/{token}/{filename}
-    # Browser-native printer ZIP downloads use the same short-lived, single-use
-    # token approach. The fixed /token route still enforces its permission
-    # dependency; only the generated-token route can proceed without a JWT.
-    "/files/download-zip/",  # /printers/{id}/files/download-zip/{token}
     # Obico ML API fetches JPEG frames by one-shot nonce (issue #172 follow-up).
     # The nonce itself is the credential: 32-byte random, single-use, ~30s TTL.
     "/obico/cached-frame/",  # /obico/cached-frame/{nonce}
+]
+
+# Browser-native printer ZIP downloads validate a short-lived, single-use token
+# in the final path segment. Match the consuming route exactly: a substring
+# pattern would also exempt sibling routes such as the permission-protected
+# ZIP preparation endpoint from the gateway middleware.
+PUBLIC_API_REGEXES = [
+    re.compile(r"^/api/v1/printers/\d+/files/download-zip/[^/]+$"),
 ]
 
 
@@ -8837,6 +8842,10 @@ async def auth_middleware(request, call_next):
     # Allow public patterns (read-only display data like thumbnails)
     for pattern in PUBLIC_API_PATTERNS:
         if pattern in path:
+            return await call_next(request)
+
+    for pattern in PUBLIC_API_REGEXES:
+        if pattern.fullmatch(path):
             return await call_next(request)
 
     # Check if auth is enabled. Fail CLOSED on any exception during the

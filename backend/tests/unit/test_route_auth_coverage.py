@@ -26,7 +26,7 @@ import re
 import pytest
 from fastapi.routing import APIRoute, APIWebSocketRoute
 
-from backend.app.main import app
+from backend.app.main import PUBLIC_API_REGEXES, app
 
 # Substring patterns identifying auth-bearing callable qualnames in the
 # resolved Depends() tree. Inner functions returned by factories carry
@@ -82,7 +82,7 @@ _PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("GET", "/api/v1/archives/{archive_id}/source-dl/{token}/{filename}"),
         ("GET", "/api/v1/library/files/{file_id}/dl/{token}/{filename}"),
         # Printer ZIP form target — validates a short-lived, single-use token
-        # bound to the printer ID before reading any requested files.
+        # bound to the printer ID before streaming its prepared bundle.
         ("POST", "/api/v1/printers/{printer_id}/files/download-zip/{token}"),
         # Obico cached frame — one-time nonce embedded in <img> tags.
         ("GET", "/api/v1/obico/cached-frame/{nonce}"),
@@ -229,3 +229,13 @@ def test_public_routes_allowlist_matches_real_routes() -> None:
         "Remove these stale entries (the route was renamed, removed, or its method changed).\n\n"
         + "\n".join(f"  {m:7} {p}" for m, p in stale)
     )
+
+
+@pytest.mark.unit
+def test_printer_zip_public_pattern_only_matches_token_consumer() -> None:
+    """The gateway exemption must not include the permission-protected mint route."""
+
+    assert any(
+        pattern.fullmatch("/api/v1/printers/12/files/download-zip/random-token") for pattern in PUBLIC_API_REGEXES
+    )
+    assert not any(pattern.fullmatch("/api/v1/printers/12/files/zip-token") for pattern in PUBLIC_API_REGEXES)

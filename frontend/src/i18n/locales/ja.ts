@@ -220,8 +220,6 @@ export default {
   },
   // Printers page
   printers: {
-    fileAccessAvailable: 'プリンターファイルへのアクセス',
-    fileAccessOfflineHint: 'ライブ状態はオフラインですが、FTP 経由でストレージを参照できます。',
     addPreflight: {
       checking: '接続を確認しています...',
       warning: '一部の接続チェックに失敗しました。このプリンターはオフラインと表示される可能性があります。下のチェックを確認し、可能な範囲で修正するか、そのまま保存してください。',
@@ -3121,6 +3119,7 @@ export default {
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
     zipStarted: '{{count}} 個のファイルの ZIP ダウンロードを開始しました',
+    zipPartial: '{{total}} 個中 {{successful}} 個のファイルで ZIP ダウンロードを開始しました。残りは取得できませんでした',
     downloadFailed: 'ダウンロードに失敗しました: {{error}}',
     unknownError: '不明なエラー',
     shiftSelectHint: 'Shift キーを押しながらクリックして範囲を選択',

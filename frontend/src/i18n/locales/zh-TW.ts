@@ -221,8 +221,6 @@ export default {
 
   // Printers page
   printers: {
-    fileAccessAvailable: '存取印表機檔案',
-    fileAccessOfflineHint: '即時狀態離線，但仍可透過 FTP 瀏覽儲存空間。',
     addPreflight: {
       checking: '正在檢查連線...',
       warning: '部分連線檢查未通過。此印表機可能顯示為離線。請查看下方的檢查項目，盡量修復，或仍然儲存。',
@@ -3109,6 +3107,7 @@ export default {
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
     zipStarted: '已開始下載 {{count}} 個檔案的 ZIP',
+    zipPartial: '已開始下載 ZIP，共 {{total}} 個檔案中成功取得 {{successful}} 個，其餘檔案無法取得',
     downloadFailed: '下載失敗：{{error}}',
     unknownError: '未知錯誤',
     shiftSelectHint: '按住 Shift 點擊以選取範圍',

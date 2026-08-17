@@ -4742,13 +4742,25 @@ export const api = {
     document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
   },
-  downloadPrinterFilesAsZip: async (printerId: number, paths: string[], filename = 'printer-files.zip'): Promise<void> => {
+  downloadPrinterFilesAsZip: async (
+    printerId: number,
+    paths: string[],
+    sizes: Record<string, number>,
+    filename = 'printer-files.zip',
+  ): Promise<{ requested: number; successful: number; failed: number }> => {
     // A regular form submission lets the browser stream the attachment to
     // disk. fetch()+response.blob() buffered the entire ZIP in browser memory,
     // which is especially costly for ~250 MB /ipcam chunks.
-    const { token } = await request<{ token: string }>(`/printers/${printerId}/files/download-zip/token`, {
+    const preparation = await request<{
+      token: string;
+      requested: number;
+      successful: number;
+      failed: number;
+    }>(`/printers/${printerId}/files/zip-token`, {
       method: 'POST',
+      body: JSON.stringify({ paths, sizes }),
     });
+    const { token } = preparation;
     const targetName = `printer-download-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const iframe = document.createElement('iframe');
     iframe.name = targetName;
@@ -4759,7 +4771,7 @@ export const api = {
     form.action = `${API_BASE}/printers/${printerId}/files/download-zip/${encodeURIComponent(token)}`;
     form.target = targetName;
     form.style.display = 'none';
-    for (const [name, value] of [['paths', JSON.stringify(paths)], ['filename', filename]]) {
+    for (const [name, value] of [['filename', filename]]) {
       const input = document.createElement('input');
       input.type = 'hidden';
       input.name = name;
@@ -4767,12 +4779,21 @@ export const api = {
       form.appendChild(input);
     }
     document.body.appendChild(iframe);
+    // Successful attachment navigations fire load after the browser has taken
+    // ownership of the response. Register before submission so even an
+    // immediate response cleans up its target.
+    iframe.addEventListener('load', () => iframe.remove(), { once: true });
     document.body.appendChild(form);
     form.submit();
     form.remove();
-    // Keep the navigation target alive for very large multi-GB selections.
-    // It is invisible and will normally disappear with the page first.
-    window.setTimeout(() => iframe.remove(), 24 * 60 * 60 * 1000);
+    // Keep a fallback for browsers that suppress load on
+    // Content-Disposition downloads.
+    window.setTimeout(() => iframe.remove(), 10 * 60 * 1000);
+    return {
+      requested: preparation.requested,
+      successful: preparation.successful,
+      failed: preparation.failed,
+    };
   },
   deletePrinterFile: (printerId: number, path: string) =>
     request<{ status: string; path: string }>(`/printers/${printerId}/files?path=${encodeURIComponent(path)}`, {

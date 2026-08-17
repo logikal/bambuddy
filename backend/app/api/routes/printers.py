@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import re
 import zipfile
@@ -71,7 +70,14 @@ from backend.app.services.printer_manager import (
     supports_drying_while_printing,
     uniform_tray_filament_hint,
 )
-from backend.app.services.printer_media import build_printer_files_zip, remove_printer_files_zip
+from backend.app.services.printer_media import (
+    PrinterFilesZipInsufficientSpaceError,
+    PrinterFilesZipTooLargeError,
+    bind_printer_files_zip_to_token,
+    build_printer_files_zip,
+    printer_files_zip_path,
+    remove_printer_files_zip,
+)
 from backend.app.utils.filament_ids import filament_id_to_setting_id
 from backend.app.utils.fts_routing import slot_extruder
 from backend.app.utils.http import build_content_disposition
@@ -1924,54 +1930,76 @@ async def download_printer_files_as_zip(
     """
     printer = await _load_printer_or_404(printer_id)
     try:
-        zip_path, _ = await build_printer_files_zip(printer, request.paths)
+        result = await build_printer_files_zip(printer, request.paths, request.sizes)
+    except PrinterFilesZipTooLargeError as exc:
+        raise HTTPException(413, str(exc)) from exc
+    except PrinterFilesZipInsufficientSpaceError as exc:
+        raise HTTPException(507, str(exc)) from exc
     except FileNotFoundError:
         raise HTTPException(404, "No files could be downloaded")
     return FileResponse(
-        path=zip_path,
+        path=result.path,
         filename="printer-files.zip",
         media_type="application/zip",
-        background=BackgroundTask(remove_printer_files_zip, zip_path),
+        headers={
+            "X-Bambuddy-Files-Requested": str(result.requested),
+            "X-Bambuddy-Files-Downloaded": str(result.successful),
+            "X-Bambuddy-Files-Failed": str(len(result.failed_paths)),
+        },
+        background=BackgroundTask(remove_printer_files_zip, result.path),
     )
 
 
-@router.post("/{printer_id}/files/download-zip/token")
+@router.post("/{printer_id}/files/zip-token")
 async def create_printer_files_download_token(
     printer_id: int,
+    request: PrinterFilesDownloadRequest,
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
 ):
-    """Create a short-lived token for a browser-native streamed download."""
+    """Prepare a bounded disk-backed ZIP, then create its download token."""
 
     from backend.app.core.auth import create_slicer_download_token
 
-    await _load_printer_or_404(printer_id)
-    return {"token": await create_slicer_download_token("printer-files", printer_id)}
+    printer = await _load_printer_or_404(printer_id)
+    try:
+        result = await build_printer_files_zip(printer, request.paths, request.sizes)
+    except PrinterFilesZipTooLargeError as exc:
+        raise HTTPException(413, str(exc)) from exc
+    except PrinterFilesZipInsufficientSpaceError as exc:
+        raise HTTPException(507, str(exc)) from exc
+    except FileNotFoundError:
+        raise HTTPException(404, "No files could be downloaded")
+
+    try:
+        token = await create_slicer_download_token("printer-files", printer_id)
+        result = bind_printer_files_zip_to_token(result, printer_id, token)
+    except Exception:
+        remove_printer_files_zip(result.path)
+        raise
+
+    return {
+        "token": token,
+        "requested": result.requested,
+        "successful": result.successful,
+        "failed": len(result.failed_paths),
+    }
 
 
 @router.post("/{printer_id}/files/download-zip/{token}")
 async def download_printer_files_as_zip_with_token(
     printer_id: int,
     token: str,
-    paths: str = Form(...),
     filename: str = Form("printer-files.zip"),
 ):
-    """Consume a download token and stream the generated ZIP to the browser."""
+    """Consume a download token and stream its already-prepared ZIP."""
 
     from backend.app.core.auth import verify_slicer_download_token
 
     if not await verify_slicer_download_token(token, "printer-files", printer_id):
         raise HTTPException(403, "Invalid or expired download token")
-    try:
-        decoded_paths = json.loads(paths)
-        request = PrinterFilesDownloadRequest(paths=decoded_paths)
-    except Exception as exc:
-        raise HTTPException(400, "Invalid file selection") from exc
-
-    printer = await _load_printer_or_404(printer_id)
-    try:
-        zip_path, _ = await build_printer_files_zip(printer, request.paths)
-    except FileNotFoundError:
-        raise HTTPException(404, "No files could be downloaded")
+    zip_path = printer_files_zip_path(printer_id, token)
+    if zip_path is None or not zip_path.is_file():
+        raise HTTPException(404, "Prepared printer ZIP not found")
     safe_filename = re.sub(r"[^a-zA-Z0-9._-]+", "_", filename).strip("._") or "printer-files.zip"
     if not safe_filename.lower().endswith(".zip"):
         safe_filename += ".zip"

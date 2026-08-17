@@ -160,9 +160,8 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
-      expect(await screen.findAllByText('Live status is offline, but storage can still be browsed over FTP.'))
-        .toHaveLength(mockPrinters.length);
-      const browseButtons = screen.getAllByRole('button', { name: /browse printer files/i });
+      const browseButtons = await screen.findAllByRole('button', { name: /browse printer files/i });
+      expect(browseButtons).toHaveLength(mockPrinters.length);
       await userEvent.click(browseButtons[0]);
 
       expect(await screen.findByText('File Manager')).toBeInTheDocument();

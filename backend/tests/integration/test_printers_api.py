@@ -10,6 +10,9 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
+from backend.app.core.config import settings
+from backend.app.services.printer_media import PrinterFilesZipResult
+
 
 @pytest.fixture(autouse=True)
 def _mock_printer_test_connection():
@@ -365,30 +368,48 @@ class TestPrintersAPI:
         async_client: AsyncClient,
         printer_factory,
         tmp_path,
+        monkeypatch,
     ):
         """The browser token flow returns an attachment without a Blob API."""
         printer = await printer_factory()
-        zip_path = tmp_path / "printer-files.zip"
+        monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
+        bundle_dir = tmp_path / "prepared-bundle"
+        bundle_dir.mkdir()
+        zip_path = bundle_dir / "printer-files.zip"
         zip_path.write_bytes(b"disk-backed zip")
 
-        token_response = await async_client.post(f"/api/v1/printers/{printer.id}/files/download-zip/token")
-        assert token_response.status_code == 200
-        token = token_response.json()["token"]
-
-        with (
-            patch(
-                "backend.app.api.routes.printers.build_printer_files_zip",
-                new=AsyncMock(return_value=(zip_path, 2)),
+        with patch(
+            "backend.app.api.routes.printers.build_printer_files_zip",
+            new=AsyncMock(
+                return_value=PrinterFilesZipResult(
+                    path=zip_path,
+                    requested=2,
+                    successful=2,
+                    failed_paths=(),
+                    total_bytes=15,
+                )
             ),
-            patch("backend.app.api.routes.printers.remove_printer_files_zip"),
         ):
-            response = await async_client.post(
-                f"/api/v1/printers/{printer.id}/files/download-zip/{token}",
-                data={
-                    "paths": '["/ipcam/one.mp4", "/ipcam/two.mp4"]',
-                    "filename": "Test Printer videos.zip",
+            token_response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/files/zip-token",
+                json={
+                    "paths": ["/ipcam/one.mp4", "/ipcam/two.mp4"],
+                    "sizes": {"/ipcam/one.mp4": 7, "/ipcam/two.mp4": 8},
                 },
             )
+        assert token_response.status_code == 200
+        token = token_response.json()["token"]
+        assert token_response.json() == {
+            "token": token,
+            "requested": 2,
+            "successful": 2,
+            "failed": 0,
+        }
+
+        response = await async_client.post(
+            f"/api/v1/printers/{printer.id}/files/download-zip/{token}",
+            data={"filename": "Test Printer videos.zip"},
+        )
 
         assert response.status_code == 200
         assert response.content == b"disk-backed zip"
@@ -397,9 +418,56 @@ class TestPrintersAPI:
         # Tokens are single-use, including after a successful large download.
         replay = await async_client.post(
             f"/api/v1/printers/{printer.id}/files/download-zip/{token}",
-            data={"paths": '["/ipcam/one.mp4"]'},
         )
         assert replay.status_code == 403
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_bulk_download_token_rejects_another_printer_without_consuming_it(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+        tmp_path,
+        monkeypatch,
+    ):
+        """A printer-A token cannot download through printer B and survives that attempt."""
+        printer_a = await printer_factory(name="Printer A", serial_number="TOKENBINDINGA01")
+        printer_b = await printer_factory(name="Printer B", serial_number="TOKENBINDINGB01")
+        monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
+        bundle_dir = tmp_path / "prepared-binding-bundle"
+        bundle_dir.mkdir()
+        zip_path = bundle_dir / "printer-files.zip"
+        zip_path.write_bytes(b"bound zip")
+
+        with patch(
+            "backend.app.api.routes.printers.build_printer_files_zip",
+            new=AsyncMock(
+                return_value=PrinterFilesZipResult(
+                    path=zip_path,
+                    requested=1,
+                    successful=1,
+                    failed_paths=(),
+                    total_bytes=9,
+                )
+            ),
+        ):
+            prepared = await async_client.post(
+                f"/api/v1/printers/{printer_a.id}/files/zip-token",
+                json={"paths": ["/model.gcode"], "sizes": {"/model.gcode": 9}},
+            )
+        assert prepared.status_code == 200
+        token = prepared.json()["token"]
+
+        wrong_printer = await async_client.post(
+            f"/api/v1/printers/{printer_b.id}/files/download-zip/{token}",
+        )
+        assert wrong_printer.status_code == 403
+
+        correct_printer = await async_client.post(
+            f"/api/v1/printers/{printer_a.id}/files/download-zip/{token}",
+        )
+        assert correct_printer.status_code == 200
+        assert correct_printer.content == b"bound zip"
 
     # ========================================================================
     # Status endpoint

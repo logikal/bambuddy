@@ -221,8 +221,6 @@ export default {
 
   // Yazıcılar sayfası
   printers: {
-    fileAccessAvailable: 'Yazıcı dosyalarına erişim',
-    fileAccessOfflineHint: 'Canlı durum çevrimdışı olsa da depolama alanına FTP üzerinden göz atılabilir.',
     title: 'Yazıcılar',
     addPrinter: 'Yazıcı Ekle',
     addPreflight: {
@@ -3124,6 +3122,7 @@ export default {
   // Yazıcı Dosya Yöneticisi modali (yazıcı dahili deposu)
   printerFiles: {
     zipStarted: '{{count}} dosya için ZIP indirmesi başlatıldı',
+    zipPartial: '{{total}} dosyanın {{successful}} tanesiyle ZIP indirmesi başlatıldı; kalan dosyalar alınamadı',
     downloadFailed: 'İndirme başarısız: {{error}}',
     unknownError: 'Bilinmeyen hata',
     shiftSelectHint: 'Bir aralık seçmek için Shift tuşuyla tıklayın',
