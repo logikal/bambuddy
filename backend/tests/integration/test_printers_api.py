@@ -469,6 +469,41 @@ class TestPrintersAPI:
         assert correct_printer.status_code == 200
         assert correct_printer.content == b"bound zip"
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_legacy_bulk_download_accepts_paths_without_sizes(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+        tmp_path,
+    ):
+        """Existing API clients may omit the newer preflight size hints."""
+
+        printer = await printer_factory()
+        bundle_dir = tmp_path / "legacy-bundle"
+        bundle_dir.mkdir()
+        zip_path = bundle_dir / "printer-files.zip"
+        zip_path.write_bytes(b"legacy zip")
+        build_zip = AsyncMock(
+            return_value=PrinterFilesZipResult(
+                path=zip_path,
+                requested=1,
+                successful=1,
+                failed_paths=(),
+                total_bytes=10,
+            )
+        )
+
+        with patch("backend.app.api.routes.printers.build_printer_files_zip", new=build_zip):
+            response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/files/download-zip",
+                json={"paths": ["/model.gcode"]},
+            )
+
+        assert response.status_code == 200
+        assert response.content == b"legacy zip"
+        assert build_zip.await_args.args[1:] == (["/model.gcode"], {})
+
     # ========================================================================
     # Status endpoint
     # ========================================================================

@@ -2,12 +2,13 @@
  * Tests for the ArchivesPage component.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import { render } from '../utils';
 import { ArchivesPage } from '../../pages/ArchivesPage';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
+import { setAuthToken } from '../../api/client';
 
 const mockArchives = [
   {
@@ -68,6 +69,7 @@ const mockArchiveStats = {
 
 describe('ArchivesPage', () => {
   beforeEach(() => {
+    setAuthToken(null);
     server.use(
       http.get('/api/v1/archives/', () => {
         return HttpResponse.json(mockArchives);
@@ -100,6 +102,10 @@ describe('ArchivesPage', () => {
         return HttpResponse.json({ success: true });
       })
     );
+  });
+
+  afterEach(() => {
+    setAuthToken(null);
   });
 
   describe('rendering', () => {
@@ -309,6 +315,47 @@ describe('ArchivesPage', () => {
   });
 
   describe('timelapse management', () => {
+    it('keeps an attached timelapse available without printer-file permission', async () => {
+      setAuthToken('archive-only-token', 'session');
+      server.use(
+        http.get('*/api/v1/auth/status', () => HttpResponse.json({
+          auth_enabled: true,
+          requires_setup: false,
+        })),
+        http.get('/api/v1/auth/me', () => HttpResponse.json({
+          id: 7,
+          username: 'archive-viewer',
+          is_active: true,
+          is_admin: false,
+          groups: [],
+          permissions: ['archives:read_all'],
+          created_at: '2026-08-18T00:00:00Z',
+        })),
+        http.get('/api/v1/archives/', () => HttpResponse.json([
+          { ...mockArchives[0], timelapse_path: 'timelapses/attached.mp4' },
+          { ...mockArchives[1], timelapse_path: null },
+        ])),
+        http.get('/api/v1/archives/:id/printer-media', ({ params }) => HttpResponse.json({
+          archive_id: Number(params.id),
+          printer_id: 1,
+          local_timelapse: { name: 'attached.mp4', size: 1024 },
+          remote_files: [],
+          warnings: ['printer_files_forbidden'],
+        })),
+      );
+
+      render(<ArchivesPage />);
+
+      const mediaButton = (await screen.findAllByTitle('Download print videos'))[0];
+      expect(mediaButton).toBeEnabled();
+      const deniedButtons = screen.getAllByTitle('You do not have permission to access printer files');
+      expect(deniedButtons.every(button => button.hasAttribute('disabled'))).toBe(true);
+
+      fireEvent.click(mediaButton);
+      expect(await screen.findByText('attached.mp4')).toBeInTheDocument();
+      expect(screen.getByText('You do not have permission to access printer files')).toBeInTheDocument();
+    });
+
     it('opens print video downloads and shows matching IP camera chunks', async () => {
       server.use(
         http.get('/api/v1/archives/:id/printer-media', ({ params }) => {

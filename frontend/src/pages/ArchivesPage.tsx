@@ -1375,8 +1375,12 @@ function ArchiveCard({
             size="sm"
             className="min-w-0 p-1 sm:p-1.5"
             onClick={() => setShowPrinterMedia(true)}
-            disabled={!archive.timelapse_path && (!archive.printer_id || !archive.started_at)}
-            title={t('archives.media.download')}
+            disabled={!archive.timelapse_path && (
+              !hasPermission('printers:files') || !archive.printer_id || !archive.started_at
+            )}
+            title={!archive.timelapse_path && !hasPermission('printers:files')
+              ? t('printers.permission.noFiles')
+              : t('archives.media.download')}
           >
             <Film className="w-3 h-3 sm:w-4 sm:h-4" />
           </Button>
@@ -1568,7 +1572,7 @@ function ArchiveCard({
         />
       )}
 
-      {/* Timelapse Viewer Modal */}
+      {/* Print Media Download Modal */}
       {showPrinterMedia && (
         <ArchiveMediaDownloadModal
           archiveId={archive.id}
@@ -2405,8 +2409,12 @@ function ArchiveListRow({
             variant="ghost"
             size="sm"
             onClick={() => setShowPrinterMedia(true)}
-            disabled={!archive.timelapse_path && (!archive.printer_id || !archive.started_at)}
-            title={t('archives.media.download')}
+            disabled={!archive.timelapse_path && (
+              !hasPermission('printers:files') || !archive.printer_id || !archive.started_at
+            )}
+            title={!archive.timelapse_path && !hasPermission('printers:files')
+              ? t('printers.permission.noFiles')
+              : t('archives.media.download')}
           >
             <Film className="w-4 h-4" />
           </Button>
@@ -2616,7 +2624,7 @@ function ArchiveListRow({
         />
       )}
 
-      {/* Timelapse Viewer Modal */}
+      {/* Print Media Download Modal */}
       {showPrinterMedia && (
         <ArchiveMediaDownloadModal
           archiveId={archive.id}

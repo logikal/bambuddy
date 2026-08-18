@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CheckSquare, Download, Film, Loader2, Square, Video, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -24,6 +24,7 @@ export function ArchiveMediaDownloadModal({
   const { showToast } = useToast();
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [downloadStarting, setDownloadStarting] = useState(false);
+  const initializedSelectionArchiveRef = useRef<number | null>(null);
   const mediaQuery = useQuery({
     queryKey: ['archive-printer-media', archiveId],
     queryFn: () => api.getArchivePrinterMedia(archiveId),
@@ -33,10 +34,12 @@ export function ArchiveMediaDownloadModal({
   const remoteFiles = useMemo(() => mediaQuery.data?.remote_files ?? [], [mediaQuery.data]);
 
   useEffect(() => {
+    if (!mediaQuery.data || initializedSelectionArchiveRef.current === archiveId) return;
+    initializedSelectionArchiveRef.current = archiveId;
     if (remoteFiles.length === 1) {
       setSelectedPaths(new Set([remoteFiles[0].path]));
     }
-  }, [remoteFiles]);
+  }, [archiveId, mediaQuery.data, remoteFiles]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -196,11 +199,13 @@ export function ArchiveMediaDownloadModal({
 
               {mediaQuery.data?.warnings.map((warning) => (
                 <p key={warning} className="text-xs text-amber-600 dark:text-amber-400">
-                  {t(`archives.media.${warning === 'printer_missing'
-                    ? 'printerMissing'
-                    : warning === 'timelapse_unavailable'
-                      ? 'timelapseUnavailable'
-                      : 'ipcamUnavailable'}`)}
+                  {warning === 'printer_files_forbidden'
+                    ? t('printers.permission.noFiles')
+                    : t(`archives.media.${warning === 'printer_missing'
+                      ? 'printerMissing'
+                      : warning === 'timelapse_unavailable'
+                        ? 'timelapseUnavailable'
+                        : 'ipcamUnavailable'}`)}
                 </p>
               ))}
             </div>

@@ -1834,6 +1834,31 @@ def RequirePermissionIfAuthEnabled(*permissions: str | Permission):
     return Depends(require_permission_if_auth_enabled(*permissions))
 
 
+def probe_permissions_if_auth_enabled(*permissions: str | Permission):
+    """Return permission availability while preserving authentication errors.
+
+    This is for endpoints that can return a useful permission-independent
+    subset. Missing permissions become ``False``; invalid or absent credentials
+    still retain the normal 401 response from the shared permission checker.
+    """
+
+    permission_checker = require_permission_if_auth_enabled(*permissions)
+
+    async def checker(
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
+        x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    ) -> bool:
+        try:
+            await permission_checker(credentials, x_api_key)
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_403_FORBIDDEN:
+                return False
+            raise
+        return True
+
+    return checker
+
+
 def require_any_permission_if_auth_enabled(*permissions: str | Permission):
     """Dependency factory that requires AT LEAST ONE of the given permissions when auth is enabled."""
     perm_strings = [p.value if isinstance(p, Permission) else p for p in permissions]

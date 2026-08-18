@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import shutil
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 VIDEO_SUFFIXES = (".mp4", ".avi", ".mkv")
 MAX_PRINTER_ZIP_BYTES = 10 * 1024**3
 PRINTER_ZIP_FREE_SPACE_RESERVE = 256 * 1024**2
-_STALE_BUNDLE_SECONDS = 24 * 60 * 60
+_STALE_BUNDLE_SECONDS = 60 * 60
 _BUNDLE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
 
 
@@ -129,6 +130,13 @@ def _prune_stale_bundles(root: Path) -> None:
             continue
 
 
+async def prune_stale_printer_file_bundles() -> None:
+    """Prune abandoned printer ZIPs without blocking the event loop."""
+
+    root = await asyncio.to_thread(_printer_zip_root)
+    await asyncio.to_thread(_prune_stale_bundles, root)
+
+
 def printer_files_zip_path(printer_id: int, token: str) -> Path | None:
     """Resolve the staged ZIP for a resource-bound browser token."""
 
@@ -153,6 +161,11 @@ def bind_printer_files_zip_to_token(
 
 
 def _check_initial_space(root: Path, sizes: dict[str, int]) -> None:
+    # These sizes are client-reported hints used only for an early rejection.
+    # Actual bytes are enforced after each FTP transfer below. An understated
+    # file can therefore temporarily occupy one extra source file on disk, and
+    # concurrent preparations can observe the same free space; the per-file
+    # cap and free-space recheck bound both cases before data enters the ZIP.
     expected_total = sum(sizes.values())
     if expected_total > MAX_PRINTER_ZIP_BYTES:
         raise PrinterFilesZipTooLargeError(
@@ -184,17 +197,17 @@ async def build_printer_files_zip(
     only a few could exhaust both server and browser memory.
     """
 
-    root = _printer_zip_root()
-    _prune_stale_bundles(root)
-    _check_initial_space(root, sizes)
+    root = await asyncio.to_thread(_printer_zip_root)
+    await asyncio.to_thread(_prune_stale_bundles, root)
+    await asyncio.to_thread(_check_initial_space, root, sizes)
 
     if bundle_key is None:
-        bundle_dir = Path(tempfile.mkdtemp(prefix="bundle-", dir=root))
+        bundle_dir = Path(await asyncio.to_thread(tempfile.mkdtemp, prefix="bundle-", dir=root))
     else:
         if not _BUNDLE_KEY_RE.fullmatch(bundle_key):
             raise ValueError("Invalid printer ZIP bundle key")
         bundle_dir = root / bundle_key
-        bundle_dir.mkdir(mode=0o700)
+        await asyncio.to_thread(bundle_dir.mkdir, mode=0o700)
     zip_path = bundle_dir / "printer-files.zip"
     successful = 0
     total_bytes = 0
@@ -202,7 +215,8 @@ async def build_printer_files_zip(
     used_names: set[str] = set()
 
     try:
-        with zipfile.ZipFile(zip_path, "w", allowZip64=True) as archive:
+        archive = await asyncio.to_thread(zipfile.ZipFile, zip_path, "w", allowZip64=True)
+        try:
             for index, remote_path in enumerate(paths):
                 if not isinstance(remote_path, str) or not remote_path.startswith("/") or "\x00" in remote_path:
                     logger.warning("Skipping invalid printer file path: %r", remote_path)
@@ -222,19 +236,21 @@ async def build_printer_files_zip(
                     if not downloaded:
                         failed_paths.append(remote_path)
                         continue
-                    file_size = staged_path.stat().st_size
+                    file_size = (await asyncio.to_thread(staged_path.stat)).st_size
                     if total_bytes + file_size > MAX_PRINTER_ZIP_BYTES:
                         raise PrinterFilesZipTooLargeError(
                             f"Downloaded files exceed the {MAX_PRINTER_ZIP_BYTES}-byte limit"
                         )
-                    if shutil.disk_usage(root).free < file_size + PRINTER_ZIP_FREE_SPACE_RESERVE:
+                    free = (await asyncio.to_thread(shutil.disk_usage, root)).free
+                    if free < file_size + PRINTER_ZIP_FREE_SPACE_RESERVE:
                         raise PrinterFilesZipInsufficientSpaceError(
                             "The app data volume ran out of safe staging space while building the ZIP"
                         )
                     compression = (
                         zipfile.ZIP_STORED if remote_path.lower().endswith(VIDEO_SUFFIXES) else zipfile.ZIP_DEFLATED
                     )
-                    archive.write(
+                    await asyncio.to_thread(
+                        archive.write,
                         staged_path,
                         _zip_arcname(remote_path, used_names),
                         compress_type=compression,
@@ -247,13 +263,15 @@ async def build_printer_files_zip(
                     logger.warning("Failed to add %s to printer ZIP: %s", remote_path, exc)
                     failed_paths.append(remote_path)
                 finally:
-                    staged_path.unlink(missing_ok=True)
+                    await asyncio.to_thread(staged_path.unlink, missing_ok=True)
+        finally:
+            await asyncio.to_thread(archive.close)
     except Exception:
-        shutil.rmtree(bundle_dir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, bundle_dir, ignore_errors=True)
         raise
 
     if successful == 0:
-        shutil.rmtree(bundle_dir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, bundle_dir, ignore_errors=True)
         raise FileNotFoundError("No files could be downloaded")
     return PrinterFilesZipResult(
         path=zip_path,

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.core.auth import (
     RequireCameraStreamTokenIfAuthEnabled,
     RequirePermissionIfAuthEnabled,
+    probe_permissions_if_auth_enabled,
     require_ownership_permission,
 )
 from backend.app.core.config import settings
@@ -2306,14 +2307,14 @@ async def get_archive_printer_media(
             Permission.ARCHIVES_READ_OWN,
         )
     ),
-    _files_user: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    can_list_printer_files: bool = Depends(probe_permissions_if_auth_enabled(Permission.PRINTERS_FILES)),
 ):
     """Find downloadable timelapse and `/ipcam` files for one print.
 
     Local attached timelapses are returned without touching the printer.
-    Printer directories are listed read-only and therefore also require
-    ``printers:files``; files are downloaded only after the user explicitly
-    selects them in the UI.
+    Printer directories are listed only when the caller also has
+    ``printers:files``; otherwise the local result is returned with a warning.
+    Files are downloaded only after the user explicitly selects them in the UI.
     """
 
     user, can_read_all = auth_result
@@ -2336,6 +2337,9 @@ async def get_archive_printer_media(
         "warnings": [],
     }
     if archive.printer_id is None or archive.started_at is None:
+        return response
+    if not can_list_printer_files:
+        response["warnings"].append("printer_files_forbidden")
         return response
 
     printer = (await db.execute(select(Printer).where(Printer.id == archive.printer_id))).scalar_one_or_none()

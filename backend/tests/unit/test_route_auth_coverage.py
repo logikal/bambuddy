@@ -26,7 +26,7 @@ import re
 import pytest
 from fastapi.routing import APIRoute, APIWebSocketRoute
 
-from backend.app.main import PUBLIC_API_REGEXES, app
+from backend.app.main import PUBLIC_API_REGEXES, _build_public_api_regexes, app
 
 # Substring patterns identifying auth-bearing callable qualnames in the
 # resolved Depends() tree. Inner functions returned by factories carry
@@ -239,3 +239,11 @@ def test_printer_zip_public_pattern_only_matches_token_consumer() -> None:
         pattern.fullmatch("/api/v1/printers/12/files/download-zip/random-token") for pattern in PUBLIC_API_REGEXES
     )
     assert not any(pattern.fullmatch("/api/v1/printers/12/files/zip-token") for pattern in PUBLIC_API_REGEXES)
+
+
+@pytest.mark.unit
+def test_printer_zip_public_pattern_uses_configured_api_prefix() -> None:
+    patterns = _build_public_api_regexes("/custom/api/")
+
+    assert any(pattern.fullmatch("/custom/api/printers/12/files/download-zip/random-token") for pattern in patterns)
+    assert not any(pattern.fullmatch("/api/v1/printers/12/files/download-zip/random-token") for pattern in patterns)

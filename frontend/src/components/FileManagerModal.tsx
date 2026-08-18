@@ -407,10 +407,7 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
   };
 
   const selectAllFiles = () => {
-    if (!data?.files) return;
-    const filePaths = data.files
-      .filter(f => !f.is_directory && (!searchQuery || f.name.toLowerCase().includes(searchQuery.toLowerCase())))
-      .map(f => f.path);
+    const filePaths = visibleFiles.filter(file => !file.is_directory).map(file => file.path);
     setSelectedFiles(new Set(filePaths));
     selectionAnchorRef.current = null;
   };

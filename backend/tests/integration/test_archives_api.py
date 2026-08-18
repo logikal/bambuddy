@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import AsyncClient
 
+from backend.app.core.config import settings
+
 
 class TestArchivesAPI:
     """Integration tests for /api/v1/archives/ endpoints."""
@@ -324,9 +326,19 @@ class TestArchivesAPI:
         async_client: AsyncClient,
         archive_factory,
         printer_factory,
+        tmp_path,
+        monkeypatch,
     ):
         printer = await printer_factory()
-        archive = await archive_factory(printer.id, started_at=datetime(2026, 8, 12, 10, 0))
+        monkeypatch.setattr(settings, "base_dir", tmp_path)
+        timelapse = tmp_path / "timelapses" / "attached.mp4"
+        timelapse.parent.mkdir()
+        timelapse.write_bytes(b"attached video")
+        archive = await archive_factory(
+            printer.id,
+            started_at=datetime(2026, 8, 12, 10, 0),
+            timelapse_path="timelapses/attached.mp4",
+        )
         setup = await async_client.post(
             "/api/v1/auth/setup",
             json={
@@ -362,11 +374,18 @@ class TestArchivesAPI:
             json={"username": "archiveonlymedia", "password": "ArchivePass1!"},
         )
 
-        response = await async_client.get(
-            f"/api/v1/archives/{archive.id}/printer-media",
-            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
-        )
-        assert response.status_code == 403
+        list_files = AsyncMock()
+        with patch("backend.app.api.routes.archives.list_files_async", new=list_files):
+            response = await async_client.get(
+                f"/api/v1/archives/{archive.id}/printer-media",
+                headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["local_timelapse"] == {"name": "attached.mp4", "size": 14}
+        assert response.json()["remote_files"] == []
+        assert response.json()["warnings"] == ["printer_files_forbidden"]
+        list_files.assert_not_awaited()
 
     # ========================================================================
     # Update endpoints

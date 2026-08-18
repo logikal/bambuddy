@@ -8077,6 +8077,16 @@ async def lifespan(app: FastAPI):
 
     await init_db()
 
+    # Browser download tokens expire after five minutes. Remove abandoned
+    # prepared ZIPs at startup as well as before each new preparation so a
+    # quiet appliance cannot retain an unusable bundle indefinitely.
+    try:
+        from backend.app.services.printer_media import prune_stale_printer_file_bundles
+
+        await prune_stale_printer_file_bundles()
+    except Exception as exc:
+        logging.warning("Failed to prune stale printer download bundles: %s", exc)
+
     # After migrations, so the is_env_managed column exists. Never raises --
     # a bad BAMBUDDY_OIDC_* value is logged and skipped rather than blocking
     # startup (see apply_env_oidc_provider).
@@ -8661,13 +8671,21 @@ PUBLIC_API_PATTERNS = [
     "/obico/cached-frame/",  # /obico/cached-frame/{nonce}
 ]
 
+
 # Browser-native printer ZIP downloads validate a short-lived, single-use token
 # in the final path segment. Match the consuming route exactly: a substring
 # pattern would also exempt sibling routes such as the permission-protected
 # ZIP preparation endpoint from the gateway middleware.
-PUBLIC_API_REGEXES = [
-    re.compile(r"^/api/v1/printers/\d+/files/download-zip/[^/]+$"),
-]
+def _build_public_api_regexes(api_prefix: str) -> list[re.Pattern[str]]:
+    """Build token-consumer exemptions for the configured API prefix."""
+
+    prefix = "/" + api_prefix.strip("/")
+    return [
+        re.compile(rf"^{re.escape(prefix)}/printers/\d+/files/download-zip/[^/]+$"),
+    ]
+
+
+PUBLIC_API_REGEXES = _build_public_api_regexes(app_settings.api_prefix)
 
 
 _security_headers_logger = logging.getLogger("backend.app.main.security_headers")

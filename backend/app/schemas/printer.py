@@ -451,15 +451,15 @@ class PrinterFilesDownloadRequest(BaseModel):
     """Printer paths selected for a bulk download."""
 
     paths: list[str] = Field(..., min_length=1, max_length=1000)
-    sizes: dict[str, int] = Field(..., min_length=1, max_length=1000)
+    sizes: dict[str, int] = Field(default_factory=dict, max_length=1000)
 
     @model_validator(mode="after")
     def _validate_sizes(self):
-        """Require one non-negative FTP-reported size for every selected path."""
+        """Validate optional FTP-reported sizes used for early rejection."""
 
         if len(set(self.paths)) != len(self.paths):
             raise ValueError("Selected printer paths must be unique")
-        if set(self.sizes) != set(self.paths):
+        if self.sizes and set(self.sizes) != set(self.paths):
             raise ValueError("A size is required for every selected printer path")
         if any(size < 0 for size in self.sizes.values()):
             raise ValueError("Printer file sizes must not be negative")

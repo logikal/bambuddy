@@ -396,6 +396,23 @@ describe('FileManagerModal', () => {
         expect(screen.queryByText('print_job.gcode')).not.toBeInTheDocument();
       });
     });
+
+    it('selects all files from the shared visible-file filter', async () => {
+      render(
+        <FileManagerModal
+          printerId={1}
+          printerName="X1 Carbon"
+          onClose={mockOnClose}
+        />
+      );
+
+      await waitFor(() => expect(screen.getByText('benchy.3mf')).toBeInTheDocument());
+      fireEvent.change(screen.getByPlaceholderText('Filter files...'), { target: { value: 'benchy' } });
+      fireEvent.click(screen.getByText('Select All'));
+
+      expect(screen.getByText('1 selected')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+    });
   });
 
   describe('sorting', () => {

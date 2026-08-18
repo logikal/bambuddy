@@ -1972,9 +1972,9 @@ async def create_printer_files_download_token(
 
     try:
         token = await create_slicer_download_token("printer-files", printer_id)
-        result = bind_printer_files_zip_to_token(result, printer_id, token)
+        result = await asyncio.to_thread(bind_printer_files_zip_to_token, result, printer_id, token)
     except Exception:
-        remove_printer_files_zip(result.path)
+        await asyncio.to_thread(remove_printer_files_zip, result.path)
         raise
 
     return {

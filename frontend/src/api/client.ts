@@ -709,7 +709,7 @@ export interface ArchivePrinterMedia {
   printer_id: number | null;
   local_timelapse: { name: string; size: number } | null;
   remote_files: ArchivePrinterMediaFile[];
-  warnings: Array<'printer_missing' | 'timelapse_unavailable' | 'ipcam_unavailable'>;
+  warnings: Array<'printer_missing' | 'timelapse_unavailable' | 'ipcam_unavailable' | 'printer_files_forbidden'>;
 }
 
 export interface Archive {
