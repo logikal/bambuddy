@@ -3120,7 +3120,8 @@ export default {
 
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
-    zipStarted: 'Se inició la descarga ZIP de {{count}} archivos',
+    zipStarted_one: 'Se inició la descarga ZIP de {{count}} archivo',
+    zipStarted_other: 'Se inició la descarga ZIP de {{count}} archivos',
     zipPartial: 'La descarga ZIP comenzó con {{successful}} de {{total}} archivos; no se pudieron recuperar los demás',
     downloadFailed: 'Error de descarga: {{error}}',
     unknownError: 'Error desconocido',
@@ -3136,6 +3137,7 @@ export default {
     deleteFileConfirm: '¿Eliminar "{{name}}"? Esto no se puede deshacer.',
     deleteFilesConfirm: '¿Eliminar {{count}} archivos seleccionados? Esto no se puede deshacer.',
     noFiles: 'No hay archivos en la impresora',
+    printerUnavailable: 'El servicio de archivos de la impresora no está disponible. Inténtelo de nuevo cuando la impresora esté accesible.',
     loadingFiles: 'Cargando archivos...',
     failedToLoad: 'Error al cargar los archivos',
     toast: {

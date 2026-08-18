@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import logging
@@ -13,15 +14,19 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.core import database
 from backend.app.core.auth import (
     RequireCameraStreamTokenIfAuthEnabled,
     RequirePermissionIfAuthEnabled,
+    check_printer_access,
+    current_api_key_if_present,
     probe_permissions_if_auth_enabled,
     require_ownership_permission,
 )
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
+from backend.app.models.api_key import APIKey
 from backend.app.models.archive import PrintArchive
 from backend.app.models.filament import Filament
 from backend.app.models.printer import Printer
@@ -31,13 +36,13 @@ from backend.app.schemas.archive import ArchiveResponse, ArchiveSlim, ArchiveSta
 from backend.app.schemas.print_log import PrintLogResponse
 from backend.app.schemas.slicer import SliceRequest
 from backend.app.services.archive import ArchiveService
-from backend.app.services.bambu_ftp import ftps_handshake_blocked, list_files_async
+from backend.app.services.bambu_ftp import ftps_handshake_blocked, list_files_result_async
 from backend.app.services.design_settings import overrides_from_config
 from backend.app.services.filament_requirements import annotate_rack_groups
 from backend.app.services.print_storage import REASON_INTERNAL_STORAGE, REASON_NO_EXTERNAL_STORAGE
 from backend.app.services.printer_media import VIDEO_SUFFIXES, match_ipcam_chunks
 from backend.app.utils.archive_paths import archive_photos_dir, find_archive_photo
-from backend.app.utils.http import build_content_disposition
+from backend.app.utils.http import build_content_disposition, safe_download_filename
 from backend.app.utils.threemf_tools import (
     default_plate_gcode_name,
     expand_to_project_slots,
@@ -2300,7 +2305,6 @@ async def get_thumbnail(
 @router.get("/{archive_id}/printer-media")
 async def get_archive_printer_media(
     archive_id: int,
-    db: AsyncSession = Depends(get_db),
     auth_result: tuple[User | None, bool] = Depends(
         require_ownership_permission(
             Permission.ARCHIVES_READ_ALL,
@@ -2308,6 +2312,7 @@ async def get_archive_printer_media(
         )
     ),
     can_list_printer_files: bool = Depends(probe_permissions_if_auth_enabled(Permission.PRINTERS_FILES)),
+    api_key: APIKey | None = Depends(current_api_key_if_present),
 ):
     """Find downloadable timelapse and `/ipcam` files for one print.
 
@@ -2318,15 +2323,22 @@ async def get_archive_printer_media(
     """
 
     user, can_read_all = auth_result
-    archive = _ensure_archive_visible(await ArchiveService(db).get_archive(archive_id), user, can_read_all)
+    async with database.async_session() as db:
+        archive = _ensure_archive_visible(await ArchiveService(db).get_archive(archive_id), user, can_read_all)
+        printer = None
+        claimed_timelapse_stems: set[str] = set()
+        if archive.printer_id is not None:
+            printer = (await db.execute(select(Printer).where(Printer.id == archive.printer_id))).scalar_one_or_none()
+            if printer is not None and archive.timelapse_path is None:
+                claimed_timelapse_stems = await _claimed_timelapse_stems(db, archive.printer_id, archive_id)
 
     local_timelapse = None
     if archive.timelapse_path:
         local_path = settings.base_dir / archive.timelapse_path
-        if local_path.is_file():
+        if await asyncio.to_thread(local_path.is_file):
             local_timelapse = {
                 "name": local_path.name,
-                "size": local_path.stat().st_size,
+                "size": (await asyncio.to_thread(local_path.stat)).st_size,
             }
 
     response = {
@@ -2342,10 +2354,11 @@ async def get_archive_printer_media(
         response["warnings"].append("printer_files_forbidden")
         return response
 
-    printer = (await db.execute(select(Printer).where(Printer.id == archive.printer_id))).scalar_one_or_none()
     if printer is None:
         response["warnings"].append("printer_missing")
         return response
+    if api_key is not None:
+        check_printer_access(api_key, printer.id)
 
     if ftps_handshake_blocked(printer.ip_address):
         if local_timelapse is None:
@@ -2358,48 +2371,66 @@ async def get_archive_printer_media(
     # If no copy was attached to the archive, offer the matching printer-side
     # timelapse without mutating the archive or deleting anything from the SD.
     if local_timelapse is None:
-        try:
-            listed = await list_files_async(
+        videos: list[dict] = []
+        any_timelapse_directory_available = False
+        for timelapse_dir in ("/timelapse", "/timelapse/video", "/record", "/recording"):
+            if ftps_handshake_blocked(printer.ip_address):
+                break
+            listing = await list_files_result_async(
                 printer.ip_address,
                 printer.access_code,
-                "/timelapse",
+                timelapse_dir,
                 timeout=_PRINTER_MEDIA_LIST_TIMEOUT_SECONDS,
                 printer_model=printer.model,
             )
-            videos = [
+            any_timelapse_directory_available |= listing.available
+            candidates = [
                 file
-                for file in listed
+                for file in listing.files
                 if not file.get("is_directory") and str(file.get("name") or "").lower().endswith(VIDEO_SUFFIXES)
             ]
-            candidate, _ = _match_timelapse_by_timestamp(videos, archive.started_at)
+            if candidates:
+                videos = candidates
+                break
+        if not any_timelapse_directory_available:
+            response["warnings"].append("timelapse_unavailable")
+        if videos:
+            baseline = set(archive.timelapse_baseline or [])
+            eligible = [
+                file
+                for file in videos
+                if str(file.get("name") or "") not in baseline
+                and Path(str(file.get("name") or "")).stem not in claimed_timelapse_stems
+            ]
+            if archive.timelapse_baseline is not None:
+                candidate = eligible[0] if len(eligible) == 1 else None
+            else:
+                candidate, _ = _match_timelapse_by_timestamp(eligible, archive.started_at)
             if candidate is not None:
                 remote_files.append(
                     {
                         "name": candidate.get("name"),
-                        "path": candidate.get("path") or f"/timelapse/{candidate.get('name')}",
+                        "path": candidate.get("path"),
                         "size": candidate.get("size") or 0,
                         "mtime": candidate.get("mtime"),
                         "kind": "timelapse",
                     }
                 )
-        except Exception as exc:
-            logger.info("Could not list printer timelapses for archive %s: %s", archive_id, exc)
-            response["warnings"].append("timelapse_unavailable")
 
     if ftps_handshake_blocked(printer.ip_address):
         response["warnings"].append("ipcam_unavailable")
         response["remote_files"] = remote_files
         return response
 
-    try:
-        ipcam_files = await list_files_async(
-            printer.ip_address,
-            printer.access_code,
-            "/ipcam",
-            timeout=_PRINTER_MEDIA_LIST_TIMEOUT_SECONDS,
-            printer_model=printer.model,
-        )
-        for file in match_ipcam_chunks(ipcam_files, archive.started_at, archive.completed_at):
+    ipcam_listing = await list_files_result_async(
+        printer.ip_address,
+        printer.access_code,
+        "/ipcam",
+        timeout=_PRINTER_MEDIA_LIST_TIMEOUT_SECONDS,
+        printer_model=printer.model,
+    )
+    if ipcam_listing.available:
+        for file in match_ipcam_chunks(ipcam_listing.files, archive.started_at, archive.completed_at):
             remote_files.append(
                 {
                     "name": file.get("name"),
@@ -2409,12 +2440,63 @@ async def get_archive_printer_media(
                     "kind": "ipcam",
                 }
             )
-    except Exception as exc:
-        logger.info("Could not list ipcam chunks for archive %s: %s", archive_id, exc)
+    else:
         response["warnings"].append("ipcam_unavailable")
 
     response["remote_files"] = remote_files
     return response
+
+
+@router.post("/{archive_id}/media-download-token")
+async def create_archive_media_download_token(
+    archive_id: int,
+    auth_result: tuple[User | None, bool] = Depends(
+        require_ownership_permission(Permission.ARCHIVES_READ_ALL, Permission.ARCHIVES_READ_OWN)
+    ),
+):
+    """Mint a single-use token bound to an archive's attached timelapse."""
+
+    from backend.app.core.auth import create_slicer_download_token
+
+    user, can_read_all = auth_result
+    async with database.async_session() as db:
+        archive = _ensure_archive_visible(await ArchiveService(db).get_archive(archive_id), user, can_read_all)
+    if not archive.timelapse_path:
+        raise HTTPException(404, "Timelapse not found")
+    timelapse_path = settings.base_dir / archive.timelapse_path
+    if not await asyncio.to_thread(timelapse_path.is_file):
+        raise HTTPException(404, "Timelapse file not found")
+    return {
+        "token": await create_slicer_download_token("archive-timelapse", archive_id),
+        "filename": timelapse_path.name,
+    }
+
+
+@router.get("/{archive_id}/media/dl/{token}/{filename}")
+async def download_archive_media_with_token(
+    archive_id: int,
+    token: str,
+    filename: str,
+):
+    """Consume a resource-bound token and stream an attached timelapse."""
+
+    from backend.app.core.auth import verify_slicer_download_token
+
+    if not await verify_slicer_download_token(token, "archive-timelapse", archive_id):
+        raise HTTPException(403, "Invalid or expired download token")
+    async with database.async_session() as db:
+        archive = await ArchiveService(db).get_archive(archive_id)
+    if not archive or not archive.timelapse_path:
+        raise HTTPException(404, "Timelapse not found")
+    timelapse_path = settings.base_dir / archive.timelapse_path
+    if not await asyncio.to_thread(timelapse_path.is_file):
+        raise HTTPException(404, "Timelapse file not found")
+    safe_filename = safe_download_filename(filename, fallback=timelapse_path.name)
+    return FileResponse(
+        path=timelapse_path,
+        filename=safe_filename,
+        headers={"Content-Disposition": build_content_disposition(safe_filename)},
+    )
 
 
 @router.get("/{archive_id}/timelapse")

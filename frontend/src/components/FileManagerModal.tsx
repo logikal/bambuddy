@@ -291,6 +291,7 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
   const [downloadProgress, setDownloadProgress] = useState<{ current: number; total: number } | null>(null);
   const [viewerFile, setViewerFile] = useState<{ path: string; name: string } | null>(null);
   const selectionAnchorRef = useRef<string | null>(null);
+  const downloadAbortRef = useRef<AbortController | null>(null);
 
   // Close on Escape key
   useEffect(() => {
@@ -347,6 +348,16 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
           return a.name.localeCompare(b.name);
       }
     }), [data?.files, searchQuery, sortBy]);
+
+  useEffect(() => {
+    const visiblePaths = new Set(visibleFiles.filter(file => !file.is_directory).map(file => file.path));
+    setSelectedFiles(current => new Set([...current].filter(path => visiblePaths.has(path))));
+    if (selectionAnchorRef.current && !visiblePaths.has(selectionAnchorRef.current)) {
+      selectionAnchorRef.current = null;
+    }
+  }, [visibleFiles]);
+
+  useEffect(() => () => downloadAbortRef.current?.abort(), []);
 
   const deleteMutation = useMutation({
     mutationFn: async (paths: string[]) => {
@@ -420,19 +431,11 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
   const handleDownload = async () => {
     if (selectedFiles.size === 0) return;
 
-    const paths = Array.from(selectedFiles);
+    const paths = visibleFiles.filter(file => !file.is_directory && selectedFiles.has(file.path)).map(file => file.path);
+    if (paths.length === 0) return;
+    const controller = new AbortController();
+    downloadAbortRef.current = controller;
 
-    if (paths.length === 1) {
-      // Single file - direct download with auth
-      api.downloadPrinterFile(printerId, paths[0]).catch((err) => {
-        console.error('Printer file download failed:', err);
-      });
-      setSelectedFiles(new Set());
-      selectionAnchorRef.current = null;
-      return;
-    }
-
-    // Multiple files - download as ZIP
     setDownloadProgress({ current: 0, total: paths.length });
     try {
       const sizes = Object.fromEntries(paths.map(path => [
@@ -443,7 +446,12 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
         printerId,
         paths,
         sizes,
-        `${printerName.replace(/[^a-zA-Z0-9]/g, '_')}-files.zip`,
+        paths.length === 1
+          ? data?.files.find(file => file.path === paths[0])?.name ?? 'printer-file'
+          : `${printerName.replace(/[^a-zA-Z0-9]/g, '_')}-files.zip`,
+        paths.length > 1,
+        controller.signal,
+        (completed, total) => setDownloadProgress({ current: completed, total }),
       );
       if (result.failed > 0) {
         showToast(t('printerFiles.zipPartial', {
@@ -460,13 +468,16 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
         error: error instanceof Error ? error.message : t('printerFiles.unknownError'),
       }), 'error');
     } finally {
+      if (downloadAbortRef.current === controller) downloadAbortRef.current = null;
       setDownloadProgress(null);
     }
   };
 
   const handleDelete = () => {
     if (selectedFiles.size === 0) return;
-    setFilesToDelete(Array.from(selectedFiles));
+    setFilesToDelete(
+      visibleFiles.filter(file => !file.is_directory && selectedFiles.has(file.path)).map(file => file.path),
+    );
   };
 
   // Quick navigation buttons for common directories
@@ -596,9 +607,13 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-8 h-8 text-bambu-green animate-spin" />
               </div>
+            ) : data?.warnings?.includes('printer_unavailable') ? (
+              <div className="text-center py-12 text-amber-600 dark:text-amber-400">
+                {t('printerFiles.printerUnavailable')}
+              </div>
             ) : !data?.files?.length ? (
               <div className="text-center py-12 text-bambu-gray">
-                No files in this directory
+                {t('printerFiles.noFiles')}
               </div>
             ) : (
               <div className="space-y-1">

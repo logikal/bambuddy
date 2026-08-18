@@ -8503,6 +8503,10 @@ async def lifespan(app: FastAPI):
     # L-2: Start periodic auth cleanup (stale TOTP + expired revoked JTIs)
     start_auth_cleanup()
 
+    from backend.app.services.printer_media import start_printer_download_cleanup
+
+    start_printer_download_cleanup()
+
     # Event-loop stall watchdog: dumps all thread stacks to stderr if the loop
     # freezes (#1486 — silent "container hangs after adding a printer" reports).
     from backend.app.services.loop_watchdog import start_loop_watchdog
@@ -8551,6 +8555,9 @@ async def lifespan(app: FastAPI):
         logging.warning("Failed to shut down camera broadcasters: %s", e)
     stop_expected_prints_cleanup()
     stop_auth_cleanup()
+    from backend.app.services.printer_media import stop_printer_download_cleanup
+
+    await stop_printer_download_cleanup()
     printer_manager.disconnect_all()
     await close_spoolman_client()
 
@@ -8672,20 +8679,7 @@ PUBLIC_API_PATTERNS = [
 ]
 
 
-# Browser-native printer ZIP downloads validate a short-lived, single-use token
-# in the final path segment. Match the consuming route exactly: a substring
-# pattern would also exempt sibling routes such as the permission-protected
-# ZIP preparation endpoint from the gateway middleware.
-def _build_public_api_regexes(api_prefix: str) -> list[re.Pattern[str]]:
-    """Build token-consumer exemptions for the configured API prefix."""
-
-    prefix = "/" + api_prefix.strip("/")
-    return [
-        re.compile(rf"^{re.escape(prefix)}/printers/\d+/files/download-zip/[^/]+$"),
-    ]
-
-
-PUBLIC_API_REGEXES = _build_public_api_regexes(app_settings.api_prefix)
+PUBLIC_API_REGEXES: list[re.Pattern[str]] = []
 
 
 _security_headers_logger = logging.getLogger("backend.app.main.security_headers")

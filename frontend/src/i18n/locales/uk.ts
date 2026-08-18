@@ -3146,7 +3146,8 @@ export default {
 
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
-    zipStarted: 'Розпочато завантаження ZIP для {{count}} файлів',
+    zipStarted_one: 'Розпочато завантаження ZIP для {{count}} файлу',
+    zipStarted_other: 'Розпочато завантаження ZIP для {{count}} файлів',
     zipPartial: 'Розпочато завантаження ZIP із {{successful}} з {{total}} файлів; решту отримати не вдалося',
     downloadFailed: 'Помилка завантаження: {{error}}',
     unknownError: 'Невідома помилка',
@@ -3162,6 +3163,7 @@ export default {
     deleteFileConfirm: "Видалити \"{{name}}\"? Це неможливо скасувати.",
     deleteFilesConfirm: "Видалити вибрані файли {{count}}? Це неможливо скасувати.",
     noFiles: "Немає файлів на принтері",
+    printerUnavailable: 'Файлова служба принтера недоступна. Повторіть спробу, коли принтер буде доступний.',
     loadingFiles: "Завантаження файлів...",
     failedToLoad: "Не вдалося завантажити файли",
     toast: {

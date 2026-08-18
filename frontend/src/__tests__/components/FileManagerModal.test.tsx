@@ -309,27 +309,28 @@ describe('FileManagerModal', () => {
       });
     });
 
-    it('starts multi-file downloads with a browser form and reports partial preparation', async () => {
-      let preparation: { paths: string[]; sizes: Record<string, number> } | null = null;
+    it('starts a preparation job, uses a native download link, and reports partial results', async () => {
+      let preparation: {
+        paths: string[];
+        sizes: Record<string, number>;
+        filename: string;
+        as_zip: boolean;
+      } | null = null;
       server.use(
-        http.post('/api/v1/printers/:id/files/zip-token', async ({ request }) => {
-          preparation = await request.json() as { paths: string[]; sizes: Record<string, number> };
+        http.post('/api/v1/printers/:id/files/download-job', async ({ request }) => {
+          preparation = await request.json() as typeof preparation;
           return HttpResponse.json({
+            job_id: 'job-id',
+            state: 'ready',
             token: 'download-token',
             requested: 2,
             successful: 1,
             failed: 1,
+            message: null,
           });
         }),
       );
-      let submitted: { action: string; filename: string } | null = null;
-      const submitSpy = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function () {
-        const fields = new FormData(this);
-        submitted = {
-          action: this.action,
-          filename: String(fields.get('filename')),
-        };
-      });
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
 
       render(
         <FileManagerModal
@@ -343,22 +344,21 @@ describe('FileManagerModal', () => {
       fireEvent.click(screen.getByText('Select All'));
       fireEvent.click(screen.getByRole('button', { name: /Download \(2\)/i }));
 
-      await waitFor(() => expect(submitSpy).toHaveBeenCalledOnce());
+      await waitFor(() => expect(clickSpy).toHaveBeenCalledOnce());
       expect(preparation).toEqual({
         paths: ['/benchy.3mf', '/print_job.gcode'],
         sizes: {
           '/benchy.3mf': 1048575,
           '/print_job.gcode': 2048000,
         },
-      });
-      expect(submitted).toMatchObject({
         filename: 'X1_Carbon-files.zip',
+        as_zip: true,
       });
-      expect(submitted!.action).toContain('/api/v1/printers/1/files/download-zip/download-token');
+      expect(document.querySelector('a')).toBeNull();
       expect(await screen.findByText(
         'ZIP download started with 1 of 2 files; the rest could not be retrieved',
       )).toBeInTheDocument();
-      submitSpy.mockRestore();
+      clickSpy.mockRestore();
     });
   });
 
@@ -412,6 +412,18 @@ describe('FileManagerModal', () => {
 
       expect(screen.getByText('1 selected')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+    });
+
+    it('drops hidden selections when the filter changes', async () => {
+      render(
+        <FileManagerModal printerId={1} printerName="X1 Carbon" onClose={mockOnClose} />
+      );
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Select benchy.3mf' }));
+      expect(screen.getByText('1 selected')).toBeInTheDocument();
+      fireEvent.change(screen.getByPlaceholderText('Filter files...'), { target: { value: 'gcode' } });
+
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Download' })).toBeDisabled());
     });
   });
 
@@ -513,8 +525,29 @@ describe('FileManagerModal', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('No files in this directory')).toBeInTheDocument();
+          expect(screen.getByText('No files on printer')).toBeInTheDocument();
       });
+    });
+
+    it('distinguishes an unreachable printer from an empty directory', async () => {
+      server.use(
+        http.get('/api/v1/printers/:id/files', () => {
+          return HttpResponse.json({ files: [], warnings: ['printer_unavailable'] });
+        })
+      );
+
+      render(
+        <FileManagerModal
+          printerId={1}
+          printerName="X1 Carbon"
+          onClose={mockOnClose}
+        />
+      );
+
+      expect(await screen.findByText(
+        'The printer file service is unavailable. Try again when the printer is reachable.',
+      )).toBeInTheDocument();
+      expect(screen.queryByText('No files on printer')).not.toBeInTheDocument();
     });
   });
 

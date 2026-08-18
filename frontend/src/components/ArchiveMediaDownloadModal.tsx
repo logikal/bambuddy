@@ -25,6 +25,7 @@ export function ArchiveMediaDownloadModal({
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [downloadStarting, setDownloadStarting] = useState(false);
   const initializedSelectionArchiveRef = useRef<number | null>(null);
+  const downloadAbortRef = useRef<AbortController | null>(null);
   const mediaQuery = useQuery({
     queryKey: ['archive-printer-media', archiveId],
     queryFn: () => api.getArchivePrinterMedia(archiveId),
@@ -40,6 +41,13 @@ export function ArchiveMediaDownloadModal({
       setSelectedPaths(new Set([remoteFiles[0].path]));
     }
   }, [archiveId, mediaQuery.data, remoteFiles]);
+
+  useEffect(() => {
+    const availablePaths = new Set(remoteFiles.map(file => file.path));
+    setSelectedPaths(current => new Set([...current].filter(path => availablePaths.has(path))));
+  }, [remoteFiles]);
+
+  useEffect(() => () => downloadAbortRef.current?.abort(), []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -58,25 +66,33 @@ export function ArchiveMediaDownloadModal({
     });
   };
 
-  const downloadLocalTimelapse = () => {
-    const link = document.createElement('a');
-    link.href = api.getArchiveTimelapse(archiveId);
-    link.download = `${archiveName}_timelapse`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+  const downloadLocalTimelapse = async () => {
+    const sourceName = mediaQuery.data?.local_timelapse?.name ?? '';
+    const extension = sourceName.includes('.') ? `.${sourceName.split('.').pop()}` : '';
+    try {
+      await api.downloadArchiveTimelapse(archiveId, `${archiveName}_timelapse${extension}`);
+    } catch (error) {
+      showToast(t('printerFiles.downloadFailed', {
+        error: error instanceof Error ? error.message : t('printerFiles.unknownError'),
+      }), 'error');
+    }
   };
 
   const downloadSelected = async () => {
     if (!mediaQuery.data?.printer_id || selectedPaths.size === 0) return;
+    const selectedFiles = remoteFiles.filter(file => selectedPaths.has(file.path));
+    if (selectedFiles.length === 0) return;
+    const controller = new AbortController();
+    downloadAbortRef.current = controller;
     setDownloadStarting(true);
     try {
-      const selectedFiles = remoteFiles.filter(file => selectedPaths.has(file.path));
       const result = await api.downloadPrinterFilesAsZip(
         mediaQuery.data.printer_id,
         selectedFiles.map(file => file.path),
         Object.fromEntries(selectedFiles.map(file => [file.path, file.size])),
         `${archiveName.replace(/[^a-zA-Z0-9]/g, '_')}-printer-videos.zip`,
+        true,
+        controller.signal,
       );
       if (result.failed > 0) {
         showToast(t('printerFiles.zipPartial', {
@@ -91,6 +107,7 @@ export function ArchiveMediaDownloadModal({
         error: error instanceof Error ? error.message : t('printerFiles.unknownError'),
       }), 'error');
     } finally {
+      if (downloadAbortRef.current === controller) downloadAbortRef.current = null;
       setDownloadStarting(false);
     }
   };
@@ -127,9 +144,20 @@ export function ArchiveMediaDownloadModal({
               {t('archives.media.searchFailed')}
             </p>
           ) : !hasMedia ? (
-            <p className="py-8 text-center text-bambu-gray">
-              {t('archives.media.none')}
-            </p>
+            <div className="space-y-3 py-8 text-center">
+              <p className="text-bambu-gray">{t('archives.media.none')}</p>
+              {mediaQuery.data?.warnings.map((warning) => (
+                <p key={warning} className="text-xs text-amber-600 dark:text-amber-400">
+                  {warning === 'printer_files_forbidden'
+                    ? t('printers.permission.noFiles')
+                    : t(`archives.media.${warning === 'printer_missing'
+                      ? 'printerMissing'
+                      : warning === 'timelapse_unavailable'
+                        ? 'timelapseUnavailable'
+                        : 'ipcamUnavailable'}`)}
+                </p>
+              ))}
+            </div>
           ) : (
             <div className="space-y-4">
               {mediaQuery.data?.local_timelapse && (

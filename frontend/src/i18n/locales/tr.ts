@@ -3121,7 +3121,8 @@ export default {
 
   // Yazıcı Dosya Yöneticisi modali (yazıcı dahili deposu)
   printerFiles: {
-    zipStarted: '{{count}} dosya için ZIP indirmesi başlatıldı',
+    zipStarted_one: '{{count}} dosya için ZIP indirmesi başlatıldı',
+    zipStarted_other: '{{count}} dosya için ZIP indirmesi başlatıldı',
     zipPartial: '{{total}} dosyanın {{successful}} tanesiyle ZIP indirmesi başlatıldı; kalan dosyalar alınamadı',
     downloadFailed: 'İndirme başarısız: {{error}}',
     unknownError: 'Bilinmeyen hata',
@@ -3137,6 +3138,7 @@ export default {
     deleteFileConfirm: '"{{name}}" silinsin mi? Bu geri alınamaz.',
     deleteFilesConfirm: 'Seçilen {{count}} dosya silinsin mi? Bu geri alınamaz.',
     noFiles: 'Yazıcıda dosya yok',
+    printerUnavailable: 'Yazıcı dosya hizmeti kullanılamıyor. Yazıcıya erişilebildiğinde tekrar deneyin.',
     loadingFiles: 'Dosyalar yükleniyor...',
     failedToLoad: 'Dosyalar yüklenemedi',
     toast: {

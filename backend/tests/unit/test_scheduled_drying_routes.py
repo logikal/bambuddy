@@ -6,18 +6,6 @@ from unittest.mock import patch
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def _default_printer_status_to_offline():
-    """Isolate this module from the cross-module printer-status cache leak.
-
-    The shared manager cache surviving between xdist modules is the underlying
-    bug; offline is only this route suite's deterministic test default, not an
-    intended production behavior.
-    """
-    with patch("backend.app.api.routes.scheduled_dryings.printer_manager.get_status", return_value=None):
-        yield
-
-
 def _future_iso(hours: int = 2) -> str:
     return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
 

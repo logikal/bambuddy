@@ -1625,6 +1625,64 @@ def check_printer_access(api_key: APIKey, printer_id: int) -> None:
         )
 
 
+async def validated_api_key_from_request(
+    credentials: HTTPAuthorizationCredentials | None,
+    x_api_key: str | None,
+) -> APIKey | None:
+    """Return the validated API key carried by a request, if any.
+
+    Permission dependencies intentionally return ``None`` for API-key callers so
+    routes do not mistake a key for a user identity. Printer-bound routes still
+    need the key row to enforce ``printer_ids`` after the normal scope/owner
+    permission gate has run. This helper recognizes both supported transports.
+    """
+
+    candidate = x_api_key
+    if candidate is None and credentials is not None and credentials.credentials.startswith("bb_"):
+        candidate = credentials.credentials
+    if candidate is None:
+        return None
+    async with async_session() as db:
+        api_key = await _validate_api_key(db, candidate)
+        if api_key is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        # Touch the JSON-backed value before detaching the row from the session.
+        _ = api_key.printer_ids
+        return api_key
+
+
+async def current_api_key_if_present(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+) -> APIKey | None:
+    """FastAPI dependency exposing only an authenticated API-key principal."""
+
+    return await validated_api_key_from_request(credentials, x_api_key)
+
+
+def require_printer_permission_if_auth_enabled(permission: str | Permission):
+    """Require a permission and enforce an API key's per-printer allowlist."""
+
+    permission_checker = require_permission_if_auth_enabled(permission)
+
+    async def checker(
+        printer_id: int,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
+        x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    ) -> User | None:
+        user = await permission_checker(credentials=credentials, x_api_key=x_api_key)
+        api_key = await validated_api_key_from_request(credentials, x_api_key)
+        if api_key is not None:
+            check_printer_access(api_key, printer_id)
+        return user
+
+    return checker
+
+
 # Convenience dependencies - these are functions that return Depends objects
 def RequireAdmin():
     """Dependency that requires admin role."""
@@ -1832,6 +1890,12 @@ def RequirePermission(*permissions: str | Permission):
 def RequirePermissionIfAuthEnabled(*permissions: str | Permission):
     """Convenience dependency that requires permissions if auth is enabled."""
     return Depends(require_permission_if_auth_enabled(*permissions))
+
+
+def RequirePrinterPermissionIfAuthEnabled(permission: str | Permission):
+    """Require a permission plus any API-key ``printer_ids`` restriction."""
+
+    return Depends(require_printer_permission_if_auth_enabled(permission))
 
 
 def probe_permissions_if_auth_enabled(*permissions: str | Permission):

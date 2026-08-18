@@ -2954,7 +2954,8 @@ export default {
     all: "Все",
   },
   printerFiles: {
-    zipStarted: 'Начато скачивание ZIP для {{count}} файлов',
+    zipStarted_one: 'Начато скачивание ZIP для {{count}} файла',
+    zipStarted_other: 'Начато скачивание ZIP для {{count}} файлов',
     zipPartial: 'Начато скачивание ZIP с {{successful}} из {{total}} файлов; остальные получить не удалось',
     downloadFailed: 'Ошибка скачивания: {{error}}',
     unknownError: 'Неизвестная ошибка',
@@ -2970,6 +2971,7 @@ export default {
     deleteFileConfirm: "Удалить «{{name}}»? Это действие нельзя отменить.",
     deleteFilesConfirm: "Удалить выбранные файлы ({{count}})? Это действие нельзя отменить.",
     noFiles: "На принтере нет файлов",
+    printerUnavailable: 'Файловая служба принтера недоступна. Повторите попытку, когда принтер будет доступен.',
     loadingFiles: "Загрузка файлов...",
     failedToLoad: "Не удалось загрузить файлы",
     toast: {

@@ -2962,7 +2962,8 @@ export default {
     all: '전체'
   },
   printerFiles: {
-    zipStarted: '{{count}}개 파일의 ZIP 다운로드를 시작했습니다',
+    zipStarted_one: '{{count}}개 파일의 ZIP 다운로드를 시작했습니다',
+    zipStarted_other: '{{count}}개 파일의 ZIP 다운로드를 시작했습니다',
     zipPartial: '{{total}}개 중 {{successful}}개 파일로 ZIP 다운로드를 시작했습니다. 나머지는 가져오지 못했습니다',
     downloadFailed: '다운로드 실패: {{error}}',
     unknownError: '알 수 없는 오류',
@@ -2978,6 +2979,7 @@ export default {
     deleteFileConfirm: '"{{name}}"을(를) 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.',
     deleteFilesConfirm: '선택된 {{count}}개 파일을 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.',
     noFiles: '프린터에 파일 없음',
+    printerUnavailable: '프린터 파일 서비스를 사용할 수 없습니다. 프린터에 연결할 수 있을 때 다시 시도하세요.',
     loadingFiles: '파일 로딩 중...',
     failedToLoad: '파일 로드 실패',
     toast: {

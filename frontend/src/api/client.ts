@@ -4687,6 +4687,7 @@ export const api = {
         path: string;
         mtime?: string;
       }>;
+      warnings: Array<'printer_unavailable'>;
     }>(`/printers/${printerId}/files?path=${encodeURIComponent(path)}`),
   getPrinterFileDownloadUrl: (printerId: number, path: string) =>
     `${API_BASE}/printers/${printerId}/files/download?path=${encodeURIComponent(path)}`,
@@ -4717,83 +4718,75 @@ export const api = {
     }>(`/printers/${printerId}/files/plates?path=${encodeURIComponent(path)}`),
   getPrinterFilePlateThumbnail: (printerId: number, plateIndex: number, path: string) =>
     withStreamToken(`${API_BASE}/printers/${printerId}/files/plate-thumbnail/${plateIndex}?path=${encodeURIComponent(path)}`),
-  downloadPrinterFile: async (printerId: number, path: string): Promise<void> => {
-    const headers: Record<string, string> = {};
-    if (authToken) {
-      headers['Authorization'] = `Bearer ${authToken}`;
-    }
-    const response = await fetch(
-      `${API_BASE}/printers/${printerId}/files/download?path=${encodeURIComponent(path)}`,
-      { headers }
-    );
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.detail || `HTTP ${response.status}`);
-    }
-    const disposition = response.headers.get('Content-Disposition');
-    const filename = parseContentDispositionFilename(disposition) || path.split('/').pop() || 'download';
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
-  },
   downloadPrinterFilesAsZip: async (
     printerId: number,
     paths: string[],
     sizes: Record<string, number>,
     filename = 'printer-files.zip',
+    asZip = true,
+    signal?: AbortSignal,
+    onProgress?: (completed: number, total: number) => void,
   ): Promise<{ requested: number; successful: number; failed: number }> => {
-    // A regular form submission lets the browser stream the attachment to
-    // disk. fetch()+response.blob() buffered the entire ZIP in browser memory,
-    // which is especially costly for ~250 MB /ipcam chunks.
-    const preparation = await request<{
-      token: string;
+    type JobStatus = {
+      job_id: string;
+      state: 'queued' | 'preparing' | 'ready' | 'failed' | 'cancelled';
       requested: number;
       successful: number;
       failed: number;
-    }>(`/printers/${printerId}/files/zip-token`, {
-      method: 'POST',
-      body: JSON.stringify({ paths, sizes }),
-    });
-    const { token } = preparation;
-    const targetName = `printer-download-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const iframe = document.createElement('iframe');
-    iframe.name = targetName;
-    iframe.style.display = 'none';
-    iframe.title = 'Printer file download';
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = `${API_BASE}/printers/${printerId}/files/download-zip/${encodeURIComponent(token)}`;
-    form.target = targetName;
-    form.style.display = 'none';
-    for (const [name, value] of [['filename', filename]]) {
-      const input = document.createElement('input');
-      input.type = 'hidden';
-      input.name = name;
-      input.value = value;
-      form.appendChild(input);
-    }
-    document.body.appendChild(iframe);
-    // Successful attachment navigations fire load after the browser has taken
-    // ownership of the response. Register before submission so even an
-    // immediate response cleans up its target.
-    iframe.addEventListener('load', () => iframe.remove(), { once: true });
-    document.body.appendChild(form);
-    form.submit();
-    form.remove();
-    // Keep a fallback for browsers that suppress load on
-    // Content-Disposition downloads.
-    window.setTimeout(() => iframe.remove(), 10 * 60 * 1000);
-    return {
-      requested: preparation.requested,
-      successful: preparation.successful,
-      failed: preparation.failed,
+      token: string | null;
+      message: string | null;
     };
+    let jobId: string | null = null;
+    try {
+      if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError');
+      let status = await request<JobStatus>(`/printers/${printerId}/files/download-job`, {
+        method: 'POST',
+        body: JSON.stringify({ paths, sizes, filename, as_zip: asZip }),
+        signal,
+      });
+      jobId = status.job_id;
+      while (status.state === 'queued' || status.state === 'preparing') {
+        onProgress?.(status.successful + status.failed, status.requested);
+        await new Promise<void>((resolve, reject) => {
+          if (signal?.aborted) {
+            reject(new DOMException('Download cancelled', 'AbortError'));
+            return;
+          }
+          const onAbort = () => {
+            window.clearTimeout(timer);
+            reject(new DOMException('Download cancelled', 'AbortError'));
+          };
+          const timer = window.setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+          }, 500);
+          signal?.addEventListener('abort', onAbort, { once: true });
+        });
+        status = await request<JobStatus>(`/printers/${printerId}/files/download-jobs/${jobId}`, { signal });
+      }
+      onProgress?.(status.successful + status.failed, status.requested);
+      if (status.state !== 'ready' || !status.token) {
+        throw new Error(status.message || (status.state === 'cancelled'
+          ? 'Download cancelled'
+          : 'Printer download preparation failed'));
+      }
+      const link = document.createElement('a');
+      link.href = `${API_BASE}/printers/${printerId}/files/dl/${encodeURIComponent(status.token)}/${encodeURIComponent(filename)}`;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      return {
+        requested: status.requested,
+        successful: status.successful,
+        failed: status.failed,
+      };
+    } catch (error) {
+      if (jobId) {
+        await request(`/printers/${printerId}/files/download-jobs/${jobId}`, { method: 'DELETE' }).catch(() => undefined);
+      }
+      throw error;
+    }
   },
   deletePrinterFile: (printerId: number, path: string) =>
     request<{ status: string; path: string }>(`/printers/${printerId}/files?path=${encodeURIComponent(path)}`, {
@@ -5047,6 +5040,18 @@ export const api = {
   getArchiveGcode: (id: number) => `${API_BASE}/archives/${id}/gcode`,
   getArchivePlatePreview: (id: number) => withStreamToken(`${API_BASE}/archives/${id}/plate-preview`),
   getArchiveTimelapse: (id: number) => withStreamToken(`${API_BASE}/archives/${id}/timelapse?v=${Date.now()}`),
+  downloadArchiveTimelapse: async (id: number, filename: string): Promise<void> => {
+    const prepared = await request<{ token: string; filename: string }>(
+      `/archives/${id}/media-download-token`,
+      { method: 'POST' },
+    );
+    const link = document.createElement('a');
+    link.href = `${API_BASE}/archives/${id}/media/dl/${encodeURIComponent(prepared.token)}/${encodeURIComponent(filename)}`;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  },
   getArchivePrinterMedia: (id: number) =>
     request<ArchivePrinterMedia>(`/archives/${id}/printer-media`),
   scanArchiveTimelapse: (id: number) =>

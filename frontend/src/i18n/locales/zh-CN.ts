@@ -3106,7 +3106,8 @@ export default {
 
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
-    zipStarted: '已开始下载 {{count}} 个文件的 ZIP',
+    zipStarted_one: '已开始下载 {{count}} 个文件的 ZIP',
+    zipStarted_other: '已开始下载 {{count}} 个文件的 ZIP',
     zipPartial: '已开始下载 ZIP，共 {{total}} 个文件中成功获取 {{successful}} 个，其余文件无法获取',
     downloadFailed: '下载失败：{{error}}',
     unknownError: '未知错误',
@@ -3122,6 +3123,7 @@ export default {
     deleteFileConfirm: '删除"{{name}}"？此操作无法撤销。',
     deleteFilesConfirm: '删除 {{count}} 个选中的文件？此操作无法撤销。',
     noFiles: '打印机上没有文件',
+    printerUnavailable: '打印机文件服务不可用。请在打印机可访问时重试。',
     loadingFiles: '加载文件中...',
     failedToLoad: '加载文件失败',
     toast: {

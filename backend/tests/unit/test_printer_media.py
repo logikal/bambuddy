@@ -1,6 +1,7 @@
 import asyncio
 import os
 import shutil
+import threading
 import time
 import zipfile
 from datetime import datetime
@@ -46,8 +47,13 @@ async def test_build_printer_files_zip_stages_on_data_volume_and_compresses_by_t
     printer = SimpleNamespace(ip_address="printer", access_code="code", model="X1C")
     monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
 
+    payloads = {
+        "/ipcam/chunk.mp4": (b"video-") * 512,
+        "/cache/model.gcode": (b"G1 X1 Y1\n") * 512,
+    }
+
     async def fake_download(_ip, _code, remote_path, local_path: Path, **_kwargs):
-        local_path.write_bytes((remote_path.encode() + b"-") * 512)
+        local_path.write_bytes(payloads[remote_path])
         return True
 
     with patch(
@@ -57,7 +63,7 @@ async def test_build_printer_files_zip_stages_on_data_volume_and_compresses_by_t
         result = await build_printer_files_zip(
             printer,
             ["/ipcam/chunk.mp4", "/cache/model.gcode"],
-            {"/ipcam/chunk.mp4": 10_000, "/cache/model.gcode": 10_000},
+            {path: len(payload) for path, payload in payloads.items()},
         )
     zip_path = result.path
 
@@ -79,28 +85,31 @@ async def test_build_printer_files_zip_stages_on_data_volume_and_compresses_by_t
 async def test_build_printer_files_zip_offloads_blocking_zip_and_filesystem_work(tmp_path, monkeypatch):
     printer = SimpleNamespace(ip_address="printer", access_code="code", model="X1C")
     monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
-    real_to_thread = asyncio.to_thread
-    offloaded: list[object] = []
+    event_loop_thread = threading.get_ident()
+    offloaded_threads: list[int] = []
+    real_prune = printer_media._prune_stale_bundles
+    real_space_check = printer_media._check_initial_space
 
-    async def tracking_to_thread(func, /, *args, **kwargs):
-        offloaded.append(func)
-        return await real_to_thread(func, *args, **kwargs)
+    def tracking_prune(root):
+        offloaded_threads.append(threading.get_ident())
+        return real_prune(root)
+
+    def tracking_space_check(root, sizes):
+        offloaded_threads.append(threading.get_ident())
+        return real_space_check(root, sizes)
 
     async def fake_download(_ip, _code, _remote_path, local_path: Path, **_kwargs):
         local_path.write_bytes(b"G1 X1 Y1\n" * 512)
         return True
 
-    monkeypatch.setattr(printer_media.asyncio, "to_thread", tracking_to_thread)
+    monkeypatch.setattr(printer_media, "_prune_stale_bundles", tracking_prune)
+    monkeypatch.setattr(printer_media, "_check_initial_space", tracking_space_check)
     with patch("backend.app.services.printer_media.download_file_async", new=AsyncMock(side_effect=fake_download)):
-        result = await build_printer_files_zip(printer, ["/model.gcode"], {"/model.gcode": 4096})
+        result = await build_printer_files_zip(printer, ["/model.gcode"], {"/model.gcode": 4608})
 
     try:
-        assert printer_media._prune_stale_bundles in offloaded
-        assert any(
-            getattr(func, "__name__", "") == "write" and isinstance(getattr(func, "__self__", None), zipfile.ZipFile)
-            for func in offloaded
-        )
-        assert shutil.disk_usage in offloaded
+        assert offloaded_threads
+        assert all(thread_id != event_loop_thread for thread_id in offloaded_threads)
     finally:
         remove_printer_files_zip(result.path)
 
@@ -178,3 +187,147 @@ async def test_build_printer_files_zip_rejects_insufficient_data_volume_space(tm
 
     with pytest.raises(PrinterFilesZipInsufficientSpaceError):
         await build_printer_files_zip(printer, ["/small.gcode"], {"/small.gcode": 5})
+
+
+@pytest.mark.asyncio
+async def test_build_printer_files_zip_rejects_a_short_transfer(tmp_path, monkeypatch):
+    printer = SimpleNamespace(ip_address="printer", access_code="code", model="X1C")
+    monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
+
+    async def fake_download(_ip, _code, _remote_path, local_path: Path, **_kwargs):
+        local_path.write_bytes(b"short")
+        return True
+
+    with (
+        patch("backend.app.services.printer_media.download_file_async", new=AsyncMock(side_effect=fake_download)),
+        pytest.raises(FileNotFoundError),
+    ):
+        await build_printer_files_zip(printer, ["/video.mp4"], {"/video.mp4": 100})
+
+
+def test_match_ipcam_chunks_caps_an_unfinished_archive_window():
+    files = [
+        {
+            "name": "ipcam-record.next-week.mp4",
+            "mtime": datetime(2026, 8, 20, 10, 0),
+            "is_directory": False,
+        }
+    ]
+
+    assert (
+        match_ipcam_chunks(
+            files,
+            datetime(2026, 8, 12, 10, 0),
+            None,
+            now=datetime(2026, 8, 21, 10, 0),
+        )
+        == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_printer_files_zip_cleans_bundle_on_cancellation(tmp_path, monkeypatch):
+    printer = SimpleNamespace(ip_address="printer", access_code="code", model="X1C")
+    monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
+
+    async def cancel_download(*_args, **_kwargs):
+        raise asyncio.CancelledError
+
+    with (
+        patch("backend.app.services.printer_media.download_file_async", new=AsyncMock(side_effect=cancel_download)),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await build_printer_files_zip(printer, ["/video.mp4"], {"/video.mp4": 100})
+
+    root = settings.archive_dir / "temp" / "printer-file-downloads"
+    assert not list(root.glob("bundle-*"))
+
+
+@pytest.mark.asyncio
+async def test_build_printer_files_zip_reports_per_file_progress(tmp_path, monkeypatch):
+    printer = SimpleNamespace(ip_address="printer", access_code="code", model="X1C")
+    monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
+    progress: list[tuple[int, int]] = []
+
+    async def fake_download(_ip, _code, remote_path, local_path: Path, **_kwargs):
+        if remote_path.endswith("missing.gcode"):
+            return False
+        local_path.write_bytes(b"ok")
+        return True
+
+    async def report(successful: int, failed: int) -> None:
+        progress.append((successful, failed))
+
+    with patch(
+        "backend.app.services.printer_media.download_file_async",
+        new=AsyncMock(side_effect=fake_download),
+    ):
+        result = await build_printer_files_zip(
+            printer,
+            ["/ok.gcode", "/missing.gcode"],
+            {"/ok.gcode": 2, "/missing.gcode": 2},
+            progress_callback=report,
+        )
+
+    try:
+        assert progress == [(1, 0), (1, 1)]
+    finally:
+        remove_printer_files_zip(result.path)
+
+
+@pytest.mark.asyncio
+async def test_build_printer_files_zip_serializes_capacity_consumers_across_jobs(tmp_path, monkeypatch):
+    """Two preparations cannot spend the same free-space observation concurrently."""
+    printer = SimpleNamespace(ip_address="printer", access_code="code", model="X1C")
+    monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
+    active = 0
+    max_active = 0
+
+    async def fake_download(_ip, _code, _remote_path, local_path: Path, **_kwargs):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            await asyncio.sleep(0.05)
+            local_path.write_bytes(b"ok")
+            return True
+        finally:
+            active -= 1
+
+    with patch(
+        "backend.app.services.printer_media.download_file_async",
+        new=AsyncMock(side_effect=fake_download),
+    ):
+        first, second = await asyncio.gather(
+            build_printer_files_zip(printer, ["/first.gcode"], {"/first.gcode": 2}),
+            build_printer_files_zip(printer, ["/second.gcode"], {"/second.gcode": 2}),
+        )
+
+    try:
+        assert max_active == 1
+    finally:
+        remove_printer_files_zip(first.path)
+        remove_printer_files_zip(second.path)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_awaits_download_jobs_and_publishes_cancellation(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
+    job_id = "shutdown-job-abcdefghijklmnop"
+    printer_media._ensure_printer_zip_root()
+    started = asyncio.Event()
+
+    async def wait_forever():
+        started.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(wait_forever())
+    printer_media._LOCAL_JOB_TASKS[job_id] = task
+    await started.wait()
+
+    await printer_media.stop_printer_download_cleanup()
+
+    assert task.done()
+    assert task.cancelled()
+    assert printer_media._LOCAL_JOB_TASKS == {}
+    assert printer_media._job_cancel_path(job_id).exists()

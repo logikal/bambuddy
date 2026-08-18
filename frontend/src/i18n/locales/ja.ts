@@ -3118,7 +3118,8 @@ export default {
 
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
-    zipStarted: '{{count}} 個のファイルの ZIP ダウンロードを開始しました',
+    zipStarted_one: '{{count}} 個のファイルの ZIP ダウンロードを開始しました',
+    zipStarted_other: '{{count}} 個のファイルの ZIP ダウンロードを開始しました',
     zipPartial: '{{total}} 個中 {{successful}} 個のファイルで ZIP ダウンロードを開始しました。残りは取得できませんでした',
     downloadFailed: 'ダウンロードに失敗しました: {{error}}',
     unknownError: '不明なエラー',
@@ -3134,6 +3135,7 @@ export default {
     deleteFileConfirm: '"{{name}}" を削除しますか？この操作は取り消せません。',
     deleteFilesConfirm: '選択した{{count}}件のファイルを削除しますか？元に戻せません。',
     noFiles: 'このディレクトリにファイルがありません',
+    printerUnavailable: 'プリンターのファイルサービスを利用できません。プリンターに接続できる状態で再試行してください。',
     loadingFiles: 'ファイルを読み込み中...',
     failedToLoad: 'ファイルの読み込みに失敗しました',
     toast: {

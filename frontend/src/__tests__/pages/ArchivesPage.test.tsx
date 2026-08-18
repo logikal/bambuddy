@@ -400,10 +400,15 @@ describe('ArchivesPage', () => {
           }],
           warnings: [],
         })),
-        http.post('/api/v1/printers/:id/files/zip-token', () => HttpResponse.json(
-          { detail: 'Not enough app data volume space' },
-          { status: 507 },
-        )),
+        http.post('/api/v1/printers/:id/files/download-job', () => HttpResponse.json({
+          job_id: 'failed-job',
+          state: 'failed',
+          requested: 1,
+          successful: 0,
+          failed: 0,
+          token: null,
+          message: 'Not enough app data volume space',
+        })),
       );
 
       render(<ArchivesPage />);

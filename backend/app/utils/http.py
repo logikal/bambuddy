@@ -1,6 +1,22 @@
 """HTTP response helpers."""
 
+from pathlib import Path
 from urllib.parse import quote
+
+
+def safe_download_filename(filename: str, fallback: str = "download", max_chars: int = 200) -> str:
+    """Return a basename safe for a bounded download response header."""
+
+    basename = Path(filename.replace("\\", "/")).name
+    cleaned = "".join("_" if ord(char) < 32 or ord(char) == 127 else char for char in basename).strip(" .")
+    if not cleaned:
+        return fallback
+    if len(cleaned) <= max_chars:
+        return cleaned
+    suffixes = "".join(Path(cleaned).suffixes)
+    suffix = suffixes if len(suffixes) <= 32 else ""
+    stem_chars = max(1, max_chars - len(suffix))
+    return f"{cleaned[:stem_chars]}{suffix}"
 
 
 def build_content_disposition(filename: str, disposition: str = "attachment") -> str:

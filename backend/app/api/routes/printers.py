@@ -1,10 +1,11 @@
 import asyncio
 import logging
 import re
+import secrets
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,7 @@ from backend.app.core.auth import (
     RequireCameraStreamTokenIfAuthEnabled,
     RequireOverlayTokenIfAuthEnabled,
     RequirePermissionIfAuthEnabled,
+    RequirePrinterPermissionIfAuthEnabled,
     is_auth_enabled,
 )
 from backend.app.core.config import settings
@@ -38,6 +40,7 @@ from backend.app.schemas.printer import (
     PrinterCreate,
     PrinterDiagnosticResult,
     PrinterFilesDownloadRequest,
+    PrinterFilesJobRequest,
     PrinterResponse,
     PrinterResponseWithSecret,
     PrinterStatus,
@@ -53,7 +56,7 @@ from backend.app.services.bambu_ftp import (
     ftps_handshake_blocked,
     get_cached_3mf,
     get_storage_info_async,
-    list_files_async,
+    list_files_result_async,
 )
 from backend.app.services.print_storage import ftp_probe_paths, print_file_reachable_over_ftp
 from backend.app.services.printer_diagnostic import run_connection_diagnostic
@@ -71,16 +74,21 @@ from backend.app.services.printer_manager import (
     uniform_tray_filament_hint,
 )
 from backend.app.services.printer_media import (
+    MAX_PRINTER_ZIP_PREPARE_SECONDS,
     PrinterFilesZipInsufficientSpaceError,
     PrinterFilesZipTooLargeError,
-    bind_printer_files_zip_to_token,
+    build_printer_file,
     build_printer_files_zip,
+    cancel_printer_files_job,
+    get_printer_files_job,
+    printer_file_path,
     printer_files_zip_path,
     remove_printer_files_zip,
+    start_printer_files_job,
 )
 from backend.app.utils.filament_ids import filament_id_to_setting_id
 from backend.app.utils.fts_routing import slot_extruder
-from backend.app.utils.http import build_content_disposition
+from backend.app.utils.http import build_content_disposition, safe_download_filename
 from backend.app.utils.printer_models import MAX_CHAMBER_TEMP_C, uses_exhaust_fan_label
 
 logger = logging.getLogger(__name__)
@@ -1562,12 +1570,18 @@ async def _load_printer_or_404(printer_id: int) -> Printer:
 async def list_printer_files(
     printer_id: int,
     path: str = "/",
-    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    _=RequirePrinterPermissionIfAuthEnabled(Permission.PRINTERS_FILES),
 ):
     """List files on the printer at the specified path."""
     printer = await _load_printer_or_404(printer_id)
 
-    files = await list_files_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
+    listing = await list_files_result_async(
+        printer.ip_address,
+        printer.access_code,
+        path,
+        printer_model=printer.model,
+    )
+    files = listing.files
 
     # Add full path to each file
     for f in files:
@@ -1576,6 +1590,7 @@ async def list_printer_files(
     return {
         "path": path,
         "files": files,
+        "warnings": [] if listing.available else ["printer_unavailable"],
     }
 
 
@@ -1583,14 +1598,27 @@ async def list_printer_files(
 async def download_printer_file(
     printer_id: int,
     path: str,
-    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    _=RequirePrinterPermissionIfAuthEnabled(Permission.PRINTERS_FILES),
 ):
     """Download a file from the printer."""
     printer = await _load_printer_or_404(printer_id)
 
-    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
-    if data is None:
+    try:
+        async with asyncio.timeout(MAX_PRINTER_ZIP_PREPARE_SECONDS):
+            result = await build_printer_file(
+                printer,
+                path,
+                None,
+                bundle_key=f"single-{secrets.token_urlsafe(18)}",
+            )
+    except PrinterFilesZipTooLargeError as exc:
+        raise HTTPException(413, str(exc)) from exc
+    except PrinterFilesZipInsufficientSpaceError as exc:
+        raise HTTPException(507, str(exc)) from exc
+    except FileNotFoundError:
         raise HTTPException(404, f"File not found: {path}")
+    except TimeoutError as exc:
+        raise HTTPException(504, "Printer download exceeded the 30-minute limit") from exc
 
     # Determine content type based on extension
     filename = path.split("/")[-1]
@@ -1609,10 +1637,12 @@ async def download_printer_file(
     }
     content_type = content_types.get(ext, "application/octet-stream")
 
-    return Response(
-        content=data,
+    return FileResponse(
+        path=result.path,
+        filename=filename,
         media_type=content_type,
         headers={"Content-Disposition": build_content_disposition(filename)},
+        background=BackgroundTask(remove_printer_files_zip, result.path),
     )
 
 
@@ -1620,7 +1650,7 @@ async def download_printer_file(
 async def get_printer_file_gcode(
     printer_id: int,
     path: str,
-    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    _=RequirePrinterPermissionIfAuthEnabled(Permission.PRINTERS_FILES),
 ):
     """Get gcode for a file stored on a printer (for preview)."""
     import io
@@ -1654,7 +1684,7 @@ async def get_printer_file_gcode(
 async def get_printer_file_plates(
     printer_id: int,
     path: str = Query(..., description="Full path to the 3MF file on the printer"),
-    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    _=RequirePrinterPermissionIfAuthEnabled(Permission.PRINTERS_FILES),
 ):
     """Get available plates from a multi-plate 3MF file stored on a printer."""
     import io
@@ -1894,7 +1924,7 @@ async def get_printer_file_plate_thumbnail(
     printer_id: int,
     plate_index: int,
     path: str = Query(..., description="Full path to the 3MF file on the printer"),
-    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    _=RequirePrinterPermissionIfAuthEnabled(Permission.PRINTERS_FILES),
 ):
     """Get a plate thumbnail image from a printer-stored 3MF file."""
     import io
@@ -1921,22 +1951,35 @@ async def get_printer_file_plate_thumbnail(
 async def download_printer_files_as_zip(
     printer_id: int,
     request: PrinterFilesDownloadRequest,
-    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    _=RequirePrinterPermissionIfAuthEnabled(Permission.PRINTERS_FILES),
 ):
     """Download multiple files using a disk-backed ZIP.
 
-    Kept for API clients. The web UI uses the token endpoint below so the
-    browser can stream the response instead of buffering it into a Blob.
+    Kept backward-compatible for API clients: relative paths are rooted,
+    duplicate paths receive collision-safe names, and an all-failed request
+    returns an empty ZIP as the historical endpoint did. The browser uses the
+    asynchronous preparation endpoints below.
     """
+    if not request.paths:
+        raise HTTPException(400, "No files specified")
     printer = await _load_printer_or_404(printer_id)
+    normalized_paths = [path if path.startswith("/") else f"/{path}" for path in request.paths]
+    normalized_sizes = {path if path.startswith("/") else f"/{path}": size for path, size in request.sizes.items()}
     try:
-        result = await build_printer_files_zip(printer, request.paths, request.sizes)
+        async with asyncio.timeout(MAX_PRINTER_ZIP_PREPARE_SECONDS):
+            result = await build_printer_files_zip(
+                printer,
+                normalized_paths,
+                normalized_sizes,
+                preserve_paths=False,
+                allow_empty=True,
+            )
     except PrinterFilesZipTooLargeError as exc:
         raise HTTPException(413, str(exc)) from exc
     except PrinterFilesZipInsufficientSpaceError as exc:
         raise HTTPException(507, str(exc)) from exc
-    except FileNotFoundError:
-        raise HTTPException(404, "No files could be downloaded")
+    except TimeoutError as exc:
+        raise HTTPException(504, "Printer ZIP preparation exceeded the 30-minute limit") from exc
     return FileResponse(
         path=result.path,
         filename="printer-files.zip",
@@ -1950,64 +1993,90 @@ async def download_printer_files_as_zip(
     )
 
 
-@router.post("/{printer_id}/files/zip-token")
-async def create_printer_files_download_token(
+@router.post("/{printer_id}/files/download-job")
+async def create_printer_files_download_job(
     printer_id: int,
-    request: PrinterFilesDownloadRequest,
-    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    request: PrinterFilesJobRequest,
+    _=RequirePrinterPermissionIfAuthEnabled(Permission.PRINTERS_FILES),
 ):
-    """Prepare a bounded disk-backed ZIP, then create its download token."""
+    """Start a cancellable disk-backed preparation without holding the request."""
 
-    from backend.app.core.auth import create_slicer_download_token
-
+    if not request.paths:
+        raise HTTPException(400, "No files specified")
+    if len(set(request.paths)) != len(request.paths):
+        raise HTTPException(400, "Selected printer paths must be unique")
+    if not request.as_zip and len(request.paths) != 1:
+        raise HTTPException(400, "Native downloads require exactly one file")
     printer = await _load_printer_or_404(printer_id)
     try:
-        result = await build_printer_files_zip(printer, request.paths, request.sizes)
+        status = await start_printer_files_job(
+            printer,
+            request.paths,
+            request.sizes,
+            request.filename,
+            as_zip=request.as_zip,
+        )
     except PrinterFilesZipTooLargeError as exc:
         raise HTTPException(413, str(exc)) from exc
     except PrinterFilesZipInsufficientSpaceError as exc:
         raise HTTPException(507, str(exc)) from exc
-    except FileNotFoundError:
-        raise HTTPException(404, "No files could be downloaded")
-
-    try:
-        token = await create_slicer_download_token("printer-files", printer_id)
-        result = await asyncio.to_thread(bind_printer_files_zip_to_token, result, printer_id, token)
-    except Exception:
-        await asyncio.to_thread(remove_printer_files_zip, result.path)
-        raise
-
-    return {
-        "token": token,
-        "requested": result.requested,
-        "successful": result.successful,
-        "failed": len(result.failed_paths),
-    }
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return status.__dict__
 
 
-@router.post("/{printer_id}/files/download-zip/{token}")
-async def download_printer_files_as_zip_with_token(
+@router.get("/{printer_id}/files/download-jobs/{job_id}")
+async def get_printer_files_download_job(
+    printer_id: int,
+    job_id: str,
+    _=RequirePrinterPermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+):
+    status = await get_printer_files_job(job_id, printer_id)
+    if status is None:
+        raise HTTPException(404, "Printer download job not found")
+    return status.__dict__
+
+
+@router.delete("/{printer_id}/files/download-jobs/{job_id}")
+async def cancel_printer_files_download_job(
+    printer_id: int,
+    job_id: str,
+    _=RequirePrinterPermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+):
+    if not await cancel_printer_files_job(job_id, printer_id):
+        raise HTTPException(404, "Printer download job not found")
+    return {"status": "cancelled"}
+
+
+@router.get("/{printer_id}/files/dl/{token}/{filename}")
+async def download_prepared_printer_files(
     printer_id: int,
     token: str,
-    filename: str = Form("printer-files.zip"),
+    filename: str,
 ):
-    """Consume a download token and stream its already-prepared ZIP."""
+    """Consume a resource-bound token and stream a prepared file natively."""
 
     from backend.app.core.auth import verify_slicer_download_token
 
     if not await verify_slicer_download_token(token, "printer-files", printer_id):
         raise HTTPException(403, "Invalid or expired download token")
     zip_path = printer_files_zip_path(printer_id, token)
-    if zip_path is None or not zip_path.is_file():
-        raise HTTPException(404, "Prepared printer ZIP not found")
-    safe_filename = re.sub(r"[^a-zA-Z0-9._-]+", "_", filename).strip("._") or "printer-files.zip"
-    if not safe_filename.lower().endswith(".zip"):
-        safe_filename += ".zip"
+    raw_path = printer_file_path(printer_id, token)
+    if zip_path is not None and await asyncio.to_thread(zip_path.is_file):
+        prepared_path = zip_path
+        media_type = "application/zip"
+    elif raw_path is not None and await asyncio.to_thread(raw_path.is_file):
+        prepared_path = raw_path
+        media_type = "application/octet-stream"
+    else:
+        raise HTTPException(404, "Prepared printer download not found")
+    safe_filename = safe_download_filename(filename, fallback="printer-download")
     return FileResponse(
-        path=zip_path,
-        filename=safe_filename[:200],
-        media_type="application/zip",
-        background=BackgroundTask(remove_printer_files_zip, zip_path),
+        path=prepared_path,
+        filename=safe_filename,
+        media_type=media_type,
+        headers={"Content-Disposition": build_content_disposition(safe_filename)},
+        background=BackgroundTask(remove_printer_files_zip, prepared_path),
     )
 
 
@@ -2015,7 +2084,7 @@ async def download_printer_files_as_zip_with_token(
 async def delete_printer_file(
     printer_id: int,
     path: str,
-    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    _=RequirePrinterPermissionIfAuthEnabled(Permission.PRINTERS_FILES),
 ):
     """Delete a file from the printer."""
     printer = await _load_printer_or_404(printer_id)

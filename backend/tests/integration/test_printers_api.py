@@ -11,7 +11,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 from backend.app.core.config import settings
-from backend.app.services.printer_media import PrinterFilesZipResult
+from backend.app.services.printer_media import PrinterFilesJobStatus, PrinterFilesZipResult
 
 
 @pytest.fixture(autouse=True)
@@ -338,14 +338,26 @@ class TestPrintersAPI:
         filename: str,
         ascii_fallback: str,
         db_session,
+        tmp_path,
     ):
         """Non-ASCII filenames must not crash header encoding (issue #1245)."""
         printer = await printer_factory()
         file_bytes = b"fake 3mf content"
 
+        staged = tmp_path / "single" / "printer-file"
+        staged.parent.mkdir()
+        staged.write_bytes(file_bytes)
         with patch(
-            "backend.app.api.routes.printers.download_file_bytes_async",
-            new=AsyncMock(return_value=file_bytes),
+            "backend.app.api.routes.printers.build_printer_file",
+            new=AsyncMock(
+                return_value=PrinterFilesZipResult(
+                    path=staged,
+                    requested=1,
+                    successful=1,
+                    failed_paths=(),
+                    total_bytes=len(file_bytes),
+                )
+            ),
         ):
             response = await async_client.get(
                 f"/api/v1/printers/{printer.id}/files/download",
@@ -363,61 +375,69 @@ class TestPrintersAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_bulk_download_token_streams_file_response(
+    async def test_download_job_returns_immediately_and_prepared_token_streams_file_response(
         self,
         async_client: AsyncClient,
         printer_factory,
         tmp_path,
         monkeypatch,
     ):
-        """The browser token flow returns an attachment without a Blob API."""
+        """The browser polls a short job request, then uses a native GET."""
+        from backend.app.core.auth import create_slicer_download_token
+
         printer = await printer_factory()
         monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
-        bundle_dir = tmp_path / "prepared-bundle"
-        bundle_dir.mkdir()
+        token = await create_slicer_download_token("printer-files", printer.id)
+        bundle_dir = settings.archive_dir / "temp" / "printer-file-downloads" / f"{printer.id}-{token}"
+        bundle_dir.mkdir(parents=True)
         zip_path = bundle_dir / "printer-files.zip"
         zip_path.write_bytes(b"disk-backed zip")
 
         with patch(
-            "backend.app.api.routes.printers.build_printer_files_zip",
+            "backend.app.api.routes.printers.start_printer_files_job",
             new=AsyncMock(
-                return_value=PrinterFilesZipResult(
-                    path=zip_path,
+                return_value=PrinterFilesJobStatus(
+                    job_id="job-id",
+                    printer_id=printer.id,
+                    state="queued",
                     requested=2,
-                    successful=2,
-                    failed_paths=(),
-                    total_bytes=15,
+                    filename="Test Printer videos.zip",
                 )
             ),
         ):
-            token_response = await async_client.post(
-                f"/api/v1/printers/{printer.id}/files/zip-token",
+            job_response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/files/download-job",
                 json={
                     "paths": ["/ipcam/one.mp4", "/ipcam/two.mp4"],
                     "sizes": {"/ipcam/one.mp4": 7, "/ipcam/two.mp4": 8},
+                    "filename": "Test Printer videos.zip",
+                    "as_zip": True,
                 },
             )
-        assert token_response.status_code == 200
-        token = token_response.json()["token"]
-        assert token_response.json() == {
-            "token": token,
+        assert job_response.status_code == 200
+        assert job_response.json() == {
+            "job_id": "job-id",
+            "printer_id": printer.id,
+            "state": "queued",
             "requested": 2,
-            "successful": 2,
+            "successful": 0,
             "failed": 0,
+            "token": None,
+            "filename": "Test Printer videos.zip",
+            "message": None,
         }
 
-        response = await async_client.post(
-            f"/api/v1/printers/{printer.id}/files/download-zip/{token}",
-            data={"filename": "Test Printer videos.zip"},
+        response = await async_client.get(
+            f"/api/v1/printers/{printer.id}/files/dl/{token}/Test%20Printer%20videos.zip",
         )
 
         assert response.status_code == 200
         assert response.content == b"disk-backed zip"
-        assert 'filename="Test_Printer_videos.zip"' in response.headers["content-disposition"]
+        assert 'filename="Test Printer videos.zip"' in response.headers["content-disposition"]
 
         # Tokens are single-use, including after a successful large download.
-        replay = await async_client.post(
-            f"/api/v1/printers/{printer.id}/files/download-zip/{token}",
+        replay = await async_client.get(
+            f"/api/v1/printers/{printer.id}/files/dl/{token}/Test%20Printer%20videos.zip",
         )
         assert replay.status_code == 403
 
@@ -434,37 +454,21 @@ class TestPrintersAPI:
         printer_a = await printer_factory(name="Printer A", serial_number="TOKENBINDINGA01")
         printer_b = await printer_factory(name="Printer B", serial_number="TOKENBINDINGB01")
         monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
-        bundle_dir = tmp_path / "prepared-binding-bundle"
-        bundle_dir.mkdir()
+        from backend.app.core.auth import create_slicer_download_token
+
+        token = await create_slicer_download_token("printer-files", printer_a.id)
+        bundle_dir = settings.archive_dir / "temp" / "printer-file-downloads" / f"{printer_a.id}-{token}"
+        bundle_dir.mkdir(parents=True)
         zip_path = bundle_dir / "printer-files.zip"
         zip_path.write_bytes(b"bound zip")
 
-        with patch(
-            "backend.app.api.routes.printers.build_printer_files_zip",
-            new=AsyncMock(
-                return_value=PrinterFilesZipResult(
-                    path=zip_path,
-                    requested=1,
-                    successful=1,
-                    failed_paths=(),
-                    total_bytes=9,
-                )
-            ),
-        ):
-            prepared = await async_client.post(
-                f"/api/v1/printers/{printer_a.id}/files/zip-token",
-                json={"paths": ["/model.gcode"], "sizes": {"/model.gcode": 9}},
-            )
-        assert prepared.status_code == 200
-        token = prepared.json()["token"]
-
-        wrong_printer = await async_client.post(
-            f"/api/v1/printers/{printer_b.id}/files/download-zip/{token}",
+        wrong_printer = await async_client.get(
+            f"/api/v1/printers/{printer_b.id}/files/dl/{token}/printer-files.zip",
         )
         assert wrong_printer.status_code == 403
 
-        correct_printer = await async_client.post(
-            f"/api/v1/printers/{printer_a.id}/files/download-zip/{token}",
+        correct_printer = await async_client.get(
+            f"/api/v1/printers/{printer_a.id}/files/dl/{token}/printer-files.zip",
         )
         assert correct_printer.status_code == 200
         assert correct_printer.content == b"bound zip"
@@ -487,8 +491,8 @@ class TestPrintersAPI:
         build_zip = AsyncMock(
             return_value=PrinterFilesZipResult(
                 path=zip_path,
-                requested=1,
-                successful=1,
+                requested=2,
+                successful=2,
                 failed_paths=(),
                 total_bytes=10,
             )
@@ -497,12 +501,85 @@ class TestPrintersAPI:
         with patch("backend.app.api.routes.printers.build_printer_files_zip", new=build_zip):
             response = await async_client.post(
                 f"/api/v1/printers/{printer.id}/files/download-zip",
-                json={"paths": ["/model.gcode"]},
+                json={"paths": ["model.gcode", "model.gcode"]},
             )
 
         assert response.status_code == 200
         assert response.content == b"legacy zip"
-        assert build_zip.await_args.args[1:] == (["/model.gcode"], {})
+        assert build_zip.await_args.args[1:] == (["/model.gcode", "/model.gcode"], {})
+        assert build_zip.await_args.kwargs == {"preserve_paths": False, "allow_empty": True}
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_legacy_bulk_download_empty_selection_keeps_400_contract(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+    ):
+        printer = await printer_factory()
+
+        response = await async_client.post(
+            f"/api/v1/printers/{printer.id}/files/download-zip",
+            json={"paths": []},
+        )
+
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize("transport", ["header", "bearer"])
+    async def test_printer_file_routes_enforce_api_key_printer_scope(
+        self,
+        async_client: AsyncClient,
+        printer_factory,
+        db_session,
+        transport: str,
+    ):
+        """A key restricted to printer A must not list printer B's storage."""
+        from backend.app.core.auth import generate_api_key
+        from backend.app.models.api_key import APIKey
+        from backend.app.services.bambu_ftp import FileListResult
+
+        printer_a = await printer_factory(name="Scoped A", serial_number="SCOPEA000000001")
+        printer_b = await printer_factory(name="Scoped B", serial_number="SCOPEB000000001")
+        setup = await async_client.post(
+            "/api/v1/auth/setup",
+            json={
+                "auth_enabled": True,
+                "admin_username": "scopeadmin",
+                "admin_password": "AdminPass1!",
+            },
+        )
+        assert setup.status_code == 200, setup.text
+
+        full_key, key_hash, key_prefix = generate_api_key()
+        db_session.add(
+            APIKey(
+                name=f"printer-scope-{transport}",
+                key_hash=key_hash,
+                key_prefix=key_prefix,
+                can_control_printer=True,
+                printer_ids=[printer_a.id],
+                enabled=True,
+            )
+        )
+        await db_session.commit()
+        headers = {"X-API-Key": full_key} if transport == "header" else {"Authorization": f"Bearer {full_key}"}
+
+        listing = AsyncMock(return_value=FileListResult(files=[], available=True))
+        with patch("backend.app.api.routes.printers.list_files_result_async", new=listing):
+            denied = await async_client.get(
+                f"/api/v1/printers/{printer_b.id}/files",
+                headers=headers,
+            )
+            allowed = await async_client.get(
+                f"/api/v1/printers/{printer_a.id}/files",
+                headers=headers,
+            )
+
+        assert denied.status_code == 403
+        assert allowed.status_code == 200
+        listing.assert_awaited_once()
 
     # ========================================================================
     # Status endpoint

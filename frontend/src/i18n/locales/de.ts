@@ -3118,7 +3118,8 @@ export default {
 
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
-    zipStarted: 'ZIP-Download für {{count}} Dateien gestartet',
+    zipStarted_one: 'ZIP-Download für {{count}} Datei gestartet',
+    zipStarted_other: 'ZIP-Download für {{count}} Dateien gestartet',
     zipPartial: 'ZIP-Download mit {{successful}} von {{total}} Dateien gestartet; die übrigen konnten nicht abgerufen werden',
     downloadFailed: 'Download fehlgeschlagen: {{error}}',
     unknownError: 'Unbekannter Fehler',
@@ -3134,6 +3135,7 @@ export default {
     deleteFileConfirm: '"{{name}}" löschen? Dies kann nicht rückgängig gemacht werden.',
     deleteFilesConfirm: '{{count}} ausgewählte Dateien löschen? Dies kann nicht rückgängig gemacht werden.',
     noFiles: 'Keine Dateien auf dem Drucker',
+    printerUnavailable: 'Der Dateidienst des Druckers ist nicht erreichbar. Versuchen Sie es erneut, wenn der Drucker verfügbar ist.',
     loadingFiles: 'Dateien werden geladen...',
     failedToLoad: 'Dateien konnten nicht geladen werden',
     toast: {
