@@ -334,6 +334,7 @@ def archive_to_response(
         "duplicate_sequence": duplicate_sequence,
         "original_archive_id": original_archive_id,
         "print_name": archive.print_name,
+        "plate_id": archive.plate_id,
         "print_time_seconds": archive.print_time_seconds,
         "filament_used_grams": archive.filament_used_grams,
         "filament_type": archive.filament_type,
@@ -2776,6 +2777,7 @@ async def scan_timelapse(
             max_retries=ftp_retry_count,
             retry_delay=ftp_retry_delay,
             operation_name=f"Download timelapse {matching_file['name']}",
+            cooloff_ip=printer.ip_address,
         )
     else:
         timelapse_data = await download_file_bytes_async(
@@ -2898,6 +2900,7 @@ async def select_timelapse(
             max_retries=ftp_retry_count,
             retry_delay=ftp_retry_delay,
             operation_name=f"Download timelapse {filename}",
+            cooloff_ip=printer.ip_address,
         )
     else:
         timelapse_data = await download_file_bytes_async(

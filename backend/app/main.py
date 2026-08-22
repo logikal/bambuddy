@@ -136,6 +136,7 @@ from backend.app.services.spoolman_tracking import (
 )
 from backend.app.services.tasmota import tasmota_service
 from backend.app.utils.ams_drying import is_drying_active, temperature_alarm_suppressed
+from backend.app.utils.filament_types import printer_filament_type
 from backend.app.utils.fts_routing import extruder_for_inlet, slot_extruder as resolve_slot_extruder
 from backend.app.utils.local_time import utcnow_naive
 from backend.app.utils.print_jobs import is_internal_printer_job
@@ -2103,11 +2104,22 @@ async def on_ams_change(printer_id: int, ams_data: list):
                             continue
                         # Fingerprint mismatch — but check if tray now matches the
                         # assigned spool (e.g. auto-configure changed the tray).
+                        # Both sides are reduced to the type the slot can carry
+                        # before comparing: the assign path writes that rather
+                        # than the spool's raw material (#2902), so a spool whose
+                        # material is a product line — "PLA+", "HTPLA" — reports
+                        # back as "PLA" and would otherwise fail this check and
+                        # be auto-unlinked from the slot it was just assigned to.
+                        # Reducing the printer's side too keeps slots configured
+                        # by an older Bambuddy, still reporting "PLA+", matching.
                         spool = assignment.spool
                         if spool:
                             spool_color = (spool.rgba or "FFFFFFFF").upper()
-                            spool_type = (spool.material or "").upper()
-                            if _colors_similar(cur_color, spool_color) and cur_type.upper() == spool_type:
+                            spool_type = printer_filament_type(spool.material).upper()
+                            if (
+                                _colors_similar(cur_color, spool_color)
+                                and printer_filament_type(cur_type).upper() == spool_type
+                            ):
                                 logger.info(
                                     "Auto-unlink: spool %d AMS%d-T%d — fingerprint mismatch but tray matches spool, updating fp",
                                     assignment.spool_id,
@@ -3718,6 +3730,7 @@ async def on_print_start(printer_id: int, data: dict):
                             max_retries=ftp_retry_count,
                             retry_delay=ftp_retry_delay,
                             operation_name=f"Download 3MF from {remote_path}",
+                            cooloff_ip=printer.ip_address,
                             non_retry_exceptions=(FileNotOnPrinterError,),
                         )
                     else:
@@ -3797,6 +3810,7 @@ async def on_print_start(printer_id: int, data: dict):
                                     max_retries=ftp_retry_count,
                                     retry_delay=ftp_retry_delay,
                                     operation_name=f"Download 3MF from {remote_full_path}",
+                                    cooloff_ip=printer.ip_address,
                                 )
                             else:
                                 downloaded = await download_file_async(
@@ -3861,6 +3875,7 @@ async def on_print_start(printer_id: int, data: dict):
                                         max_retries=ftp_retry_count,
                                         retry_delay=ftp_retry_delay,
                                         operation_name=f"Re-download 3MF from {remote_path}",
+                                        cooloff_ip=printer.ip_address,
                                         non_retry_exceptions=(FileNotOnPrinterError,),
                                     )
                                 else:

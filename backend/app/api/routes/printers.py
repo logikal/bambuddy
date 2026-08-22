@@ -87,6 +87,7 @@ from backend.app.services.printer_media import (
     start_printer_files_job,
 )
 from backend.app.utils.filament_ids import filament_id_to_setting_id
+from backend.app.utils.filament_types import printer_filament_type
 from backend.app.utils.fts_routing import slot_extruder
 from backend.app.utils.http import build_content_disposition, safe_download_filename
 from backend.app.utils.printer_models import MAX_CHAMBER_TEMP_C, uses_exhaust_fan_label
@@ -2687,6 +2688,17 @@ async def configure_ams_slot(
         f"[configure_ams_slot] setting_id={setting_id!r}, kprofile_filament_id={kprofile_filament_id!r}, kprofile_setting_id={kprofile_setting_id!r}"
     )
 
+    # The modal derives tray_type from a preset name or a spool's material, so
+    # it can be a product line rather than a type ("PLA+", "PolyTerra PLA").
+    # A slot carrying one of those satisfies nothing that asks for PLA, so the
+    # slot gets the type and tray_sub_brands -- untouched here -- keeps the
+    # name (issue #2902). The requested wording is kept for the id lookup
+    # below, which knows some product lines the type table does not.
+    requested_tray_type = tray_type
+    tray_type = printer_filament_type(tray_type)
+    if tray_type != requested_tray_type:
+        logger.info("[configure_ams_slot] tray_type %r → %r", requested_tray_type, tray_type)
+
     # Get MQTT client for this printer
     client = printer_manager.get_client(printer_id)
     if not client:
@@ -2761,10 +2773,15 @@ async def configure_ams_slot(
             )
             effective_tray_info_idx = current_tray_info_idx
         elif tray_type:
-            material = tray_type.upper().strip()
+            # Requested wording first, reduced type only as a further fallback,
+            # so a material that already resolves keeps resolving to the same
+            # id: "PETG HF" has its own generic preset (GFG96) that reducing it
+            # to "PETG" would trade away for GFG99.
+            material = requested_tray_type.upper().strip()
             generic = (
                 _GENERIC_FILAMENT_IDS.get(material)
                 or _GENERIC_FILAMENT_IDS.get(material.split("-")[0].split(" ")[0])
+                or _GENERIC_FILAMENT_IDS.get(tray_type.upper())
                 or ""
             )
             if generic:
