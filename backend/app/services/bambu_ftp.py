@@ -759,17 +759,23 @@ class BambuFTPClient:
                     raise DownloadInsufficientSpace(remote_path)
             with open(local_path, "wb") as f:
                 written = 0
+                # retrbinary hands over 8 KiB at a time, so checking the volume
+                # on every callback is ~30k statvfs calls per 250 MB chunk for a
+                # reserve measured in hundreds of megabytes. Sampling every few
+                # MB cannot overshoot it by more than one interval.
+                free_check_interval = 8 * 1024 * 1024
+                next_free_check = 0
 
                 def _write(chunk: bytes) -> None:
-                    nonlocal written
+                    nonlocal written, next_free_check
                     if cancel_event is not None and cancel_event.is_set():
                         raise DownloadCancelled(remote_path)
                     if max_bytes is not None and written + len(chunk) > max_bytes:
                         raise DownloadLimitExceeded(remote_path)
-                    if min_free_bytes is not None and shutil.disk_usage(local_path.parent).free < min_free_bytes + len(
-                        chunk
-                    ):
-                        raise DownloadInsufficientSpace(remote_path)
+                    if min_free_bytes is not None and written >= next_free_check:
+                        next_free_check = written + free_check_interval
+                        if shutil.disk_usage(local_path.parent).free < min_free_bytes + free_check_interval:
+                            raise DownloadInsufficientSpace(remote_path)
                     f.write(chunk)
                     written += len(chunk)
 
@@ -1392,6 +1398,13 @@ async def download_file_async(
     For A1/A1 Mini printers, automatically tries prot_p first, then falls back
     to prot_c if the download fails. The working mode is cached for future operations.
 
+    ``timeout`` bounds the wait for a *result*, not the call: when it expires
+    this waits for the FTP worker thread to unwind before returning, because
+    the thread owns ``local_path`` until it does and a caller that came back
+    early would delete a file still being written. That wait is bounded by the
+    socket timeout, so pass ``socket_timeout`` on any path that must not block
+    indefinitely -- every caller here does.
+
     Args:
         ip_address: Printer IP address
         access_code: Printer access code
@@ -1495,19 +1508,14 @@ async def download_file_async(
             # are waiting for could never be scheduled.
             attempt_cancel.set()
             await loop.run_in_executor(None, done.wait, grace)
-            if not done.is_set():
-                # The blocking socket may need its own timeout to fire. Waiting
-                # here is intentional: returning would let the caller unlink a
-                # file the executor is still writing.
-                try:
-                    await asyncio.shield(worker)
-                except (DownloadCancelled, OSError, ftplib.Error):
-                    pass
-            else:
-                try:
-                    await asyncio.shield(worker)
-                except (DownloadCancelled, OSError, ftplib.Error):
-                    pass
+            # Wait for the thread either way. If the grace period was enough it
+            # returns at once; if it was not, the blocking socket still has to
+            # reach its own timeout, and returning before it does would let the
+            # caller unlink a file the executor is still writing.
+            try:
+                await asyncio.shield(worker)
+            except (DownloadCancelled, OSError, ftplib.Error):
+                pass
             if completion["success"] and local_path.exists() and local_path.stat().st_size > 0:
                 logger.info(
                     "FTP download wait_for timed out after %ss for %s, but thread completed within %ss grace (%s bytes) — salvaging",

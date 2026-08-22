@@ -89,7 +89,7 @@ from backend.app.services.printer_media import (
 from backend.app.utils.filament_ids import filament_id_to_setting_id
 from backend.app.utils.filament_types import printer_filament_type
 from backend.app.utils.fts_routing import slot_extruder
-from backend.app.utils.http import build_content_disposition, safe_download_filename
+from backend.app.utils.http import build_content_disposition, download_error_response, safe_download_filename
 from backend.app.utils.printer_models import MAX_CHAMBER_TEMP_C, uses_exhaust_fan_label
 
 logger = logging.getLogger(__name__)
@@ -2060,7 +2060,7 @@ async def download_prepared_printer_files(
     from backend.app.core.auth import verify_slicer_download_token
 
     if not await verify_slicer_download_token(token, "printer-files", printer_id):
-        raise HTTPException(403, "Invalid or expired download token")
+        return download_error_response(403, "This download link has already been used or has expired.")
     zip_path = printer_files_zip_path(printer_id, token)
     raw_path = printer_file_path(printer_id, token)
     if zip_path is not None and await asyncio.to_thread(zip_path.is_file):
@@ -2070,7 +2070,7 @@ async def download_prepared_printer_files(
         prepared_path = raw_path
         media_type = "application/octet-stream"
     else:
-        raise HTTPException(404, "Prepared printer download not found")
+        return download_error_response(404, "The prepared download is no longer on the server.")
     safe_filename = safe_download_filename(filename, fallback="printer-download")
     return FileResponse(
         path=prepared_path,

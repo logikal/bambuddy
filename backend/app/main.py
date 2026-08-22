@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import posixpath
-import re
 import secrets
 import time
 from contextlib import asynccontextmanager
@@ -8694,9 +8693,6 @@ PUBLIC_API_PATTERNS = [
 ]
 
 
-PUBLIC_API_REGEXES: list[re.Pattern[str]] = []
-
-
 _security_headers_logger = logging.getLogger("backend.app.main.security_headers")
 
 
@@ -8869,10 +8865,6 @@ async def auth_middleware(request, call_next):
     # Allow public patterns (read-only display data like thumbnails)
     for pattern in PUBLIC_API_PATTERNS:
         if pattern in path:
-            return await call_next(request)
-
-    for pattern in PUBLIC_API_REGEXES:
-        if pattern.fullmatch(path):
             return await call_next(request)
 
     # Check if auth is enabled. Fail CLOSED on any exception during the

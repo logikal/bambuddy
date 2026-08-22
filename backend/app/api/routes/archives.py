@@ -42,7 +42,7 @@ from backend.app.services.filament_requirements import annotate_rack_groups
 from backend.app.services.print_storage import REASON_INTERNAL_STORAGE, REASON_NO_EXTERNAL_STORAGE
 from backend.app.services.printer_media import VIDEO_SUFFIXES, match_ipcam_chunks
 from backend.app.utils.archive_paths import archive_photos_dir, find_archive_photo
-from backend.app.utils.http import build_content_disposition, safe_download_filename
+from backend.app.utils.http import build_content_disposition, download_error_response, safe_download_filename
 from backend.app.utils.threemf_tools import (
     default_plate_gcode_name,
     expand_to_project_slots,
@@ -2484,14 +2484,14 @@ async def download_archive_media_with_token(
     from backend.app.core.auth import verify_slicer_download_token
 
     if not await verify_slicer_download_token(token, "archive-timelapse", archive_id):
-        raise HTTPException(403, "Invalid or expired download token")
+        return download_error_response(403, "This download link has already been used or has expired.")
     async with database.async_session() as db:
         archive = await ArchiveService(db).get_archive(archive_id)
     if not archive or not archive.timelapse_path:
-        raise HTTPException(404, "Timelapse not found")
+        return download_error_response(404, "This print has no attached timelapse.")
     timelapse_path = settings.base_dir / archive.timelapse_path
     if not await asyncio.to_thread(timelapse_path.is_file):
-        raise HTTPException(404, "Timelapse file not found")
+        return download_error_response(404, "The attached timelapse is no longer on disk.")
     safe_filename = safe_download_filename(filename, fallback=timelapse_path.name)
     return FileResponse(
         path=timelapse_path,

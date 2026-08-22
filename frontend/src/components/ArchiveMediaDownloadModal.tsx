@@ -24,6 +24,7 @@ export function ArchiveMediaDownloadModal({
   const { showToast } = useToast();
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [downloadStarting, setDownloadStarting] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<{ current: number; total: number } | null>(null);
   const initializedSelectionArchiveRef = useRef<number | null>(null);
   const downloadAbortRef = useRef<AbortController | null>(null);
   const mediaQuery = useQuery({
@@ -93,6 +94,7 @@ export function ArchiveMediaDownloadModal({
         `${archiveName.replace(/[^a-zA-Z0-9]/g, '_')}-printer-videos.zip`,
         true,
         controller.signal,
+        (completed, total) => setDownloadProgress({ current: completed, total }),
       );
       if (result.failed > 0) {
         showToast(t('printerFiles.zipPartial', {
@@ -108,11 +110,25 @@ export function ArchiveMediaDownloadModal({
       }), 'error');
     } finally {
       if (downloadAbortRef.current === controller) downloadAbortRef.current = null;
+      setDownloadProgress(null);
       setDownloadStarting(false);
     }
   };
 
   const hasMedia = !!mediaQuery.data?.local_timelapse || remoteFiles.length > 0;
+
+  const warningText = (warning: string) => {
+    if (warning === 'printer_files_forbidden') return t('printers.permission.noFiles');
+    if (warning === 'printer_missing') return t('archives.media.printerMissing');
+    if (warning === 'timelapse_unavailable') return t('archives.media.timelapseUnavailable');
+    return t('archives.media.ipcamUnavailable');
+  };
+
+  const warnings = (mediaQuery.data?.warnings ?? []).map((warning) => (
+    <p key={warning} className="text-xs text-amber-600 dark:text-amber-400">
+      {warningText(warning)}
+    </p>
+  ));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
@@ -146,17 +162,7 @@ export function ArchiveMediaDownloadModal({
           ) : !hasMedia ? (
             <div className="space-y-3 py-8 text-center">
               <p className="text-bambu-gray">{t('archives.media.none')}</p>
-              {mediaQuery.data?.warnings.map((warning) => (
-                <p key={warning} className="text-xs text-amber-600 dark:text-amber-400">
-                  {warning === 'printer_files_forbidden'
-                    ? t('printers.permission.noFiles')
-                    : t(`archives.media.${warning === 'printer_missing'
-                      ? 'printerMissing'
-                      : warning === 'timelapse_unavailable'
-                        ? 'timelapseUnavailable'
-                        : 'ipcamUnavailable'}`)}
-                </p>
-              ))}
+              {warnings}
             </div>
           ) : (
             <div className="space-y-4">
@@ -225,17 +231,7 @@ export function ArchiveMediaDownloadModal({
                 </div>
               )}
 
-              {mediaQuery.data?.warnings.map((warning) => (
-                <p key={warning} className="text-xs text-amber-600 dark:text-amber-400">
-                  {warning === 'printer_files_forbidden'
-                    ? t('printers.permission.noFiles')
-                    : t(`archives.media.${warning === 'printer_missing'
-                      ? 'printerMissing'
-                      : warning === 'timelapse_unavailable'
-                        ? 'timelapseUnavailable'
-                        : 'ipcamUnavailable'}`)}
-                </p>
-              ))}
+              {warnings}
             </div>
           )}
         </div>
@@ -248,7 +244,9 @@ export function ArchiveMediaDownloadModal({
               disabled={selectedPaths.size === 0 || downloadStarting}
             >
               {downloadStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              {t('archives.media.downloadSelected')} ({selectedPaths.size})
+              {downloadProgress
+                ? `${downloadProgress.current}/${downloadProgress.total}`
+                : `${t('archives.media.downloadSelected')} (${selectedPaths.size})`}
             </Button>
           </div>
         )}

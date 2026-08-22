@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import os
 import shutil
@@ -22,6 +23,23 @@ from backend.app.services.printer_media import (
     prune_stale_printer_file_bundles,
     remove_printer_files_zip,
 )
+
+
+def test_module_imports_on_every_supported_platform():
+    """No POSIX-only import may sit at the top of this module.
+
+    Bambuddy ships a signed Windows installer, and printers.py imports this
+    module at startup, so a top-level ``import fcntl`` here is not a degraded
+    feature on Windows -- it is an application that does not boot at all.
+    network_utils.py is the house pattern: import inside the branch that needs
+    it, after checking ``sys.platform``.
+    """
+    tree = ast.parse(Path(printer_media.__file__).read_text(encoding="utf-8"))
+    top_level = {
+        alias.name.split(".")[0] for node in tree.body if isinstance(node, ast.Import) for alias in node.names
+    } | {node.module.split(".")[0] for node in tree.body if isinstance(node, ast.ImportFrom) and node.module}
+
+    assert not top_level & {"fcntl", "termios", "pwd", "grp", "resource", "syslog"}
 
 
 def test_match_ipcam_chunks_uses_archive_window_and_ignores_non_video_entries():
@@ -190,19 +208,34 @@ async def test_build_printer_files_zip_rejects_insufficient_data_volume_space(tm
 
 
 @pytest.mark.asyncio
-async def test_build_printer_files_zip_rejects_a_short_transfer(tmp_path, monkeypatch):
+async def test_build_printer_files_zip_keeps_a_file_whose_listing_size_went_stale(tmp_path, monkeypatch):
+    """A verified transfer is not re-judged against the browser's size hint.
+
+    download_to_file compares what it wrote against the printer's own SIZE and
+    treats that as the authority, precisely because it beats a hint the browser
+    round-tripped. The hint goes stale in the case this feature exists for -- an
+    /ipcam chunk still being written when the modal listed it -- and the file
+    then arrives longer than advertised. Dropping it as "truncated" would fail
+    the one selection the user came for; a genuinely short RETR is already
+    rejected a layer down (test_bambu_ftp.py).
+    """
     printer = SimpleNamespace(ip_address="printer", access_code="code", model="X1C")
     monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
 
     async def fake_download(_ip, _code, _remote_path, local_path: Path, **_kwargs):
-        local_path.write_bytes(b"short")
+        # The chunk grew by 20 bytes between the listing and the transfer.
+        local_path.write_bytes(b"A" * 120)
         return True
 
-    with (
-        patch("backend.app.services.printer_media.download_file_async", new=AsyncMock(side_effect=fake_download)),
-        pytest.raises(FileNotFoundError),
-    ):
-        await build_printer_files_zip(printer, ["/video.mp4"], {"/video.mp4": 100})
+    with patch("backend.app.services.printer_media.download_file_async", new=AsyncMock(side_effect=fake_download)):
+        result = await build_printer_files_zip(printer, ["/ipcam/chunk.mp4"], {"/ipcam/chunk.mp4": 100})
+
+    try:
+        assert (result.successful, result.failed_paths) == (1, ())
+        with zipfile.ZipFile(result.path) as archive:
+            assert archive.read("ipcam/chunk.mp4") == b"A" * 120
+    finally:
+        remove_printer_files_zip(result.path)
 
 
 def test_match_ipcam_chunks_caps_an_unfinished_archive_window():
@@ -276,8 +309,14 @@ async def test_build_printer_files_zip_reports_per_file_progress(tmp_path, monke
 
 
 @pytest.mark.asyncio
-async def test_build_printer_files_zip_serializes_capacity_consumers_across_jobs(tmp_path, monkeypatch):
-    """Two preparations cannot spend the same free-space observation concurrently."""
+async def test_two_preparations_run_at_the_same_time(tmp_path, monkeypatch):
+    """Nothing queues one preparation behind another.
+
+    An exclusive staging lock held for the length of a transfer would make one
+    ten-gigabyte selection block every other download on the instance -- and the
+    same code path serves the file browser's 3MF preview, so it would block that
+    too, for as long as the selection takes.
+    """
     printer = SimpleNamespace(ip_address="printer", access_code="code", model="X1C")
     monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
     active = 0
@@ -304,10 +343,49 @@ async def test_build_printer_files_zip_serializes_capacity_consumers_across_jobs
         )
 
     try:
-        assert max_active == 1
+        assert max_active == 2
     finally:
         remove_printer_files_zip(first.path)
         remove_printer_files_zip(second.path)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_preparations_both_stop_at_the_disk_reserve(tmp_path, monkeypatch):
+    """With preparations running together, the reserve is what has to hold.
+
+    The preflight only sees client-reported hints, and two jobs read the same
+    free space before either has spent any of it, so neither can be the bound.
+    The per-file check against actual bytes is, and it stops both of them
+    without leaving a staged bundle behind.
+    """
+    printer = SimpleNamespace(ip_address="printer", access_code="code", model="X1C")
+    archive_dir = tmp_path / "archive"
+    monkeypatch.setattr(settings, "archive_dir", archive_dir)
+    # Enough for the preflight, which is told 2 bytes; nowhere near enough for
+    # the 10 MiB that actually arrives.
+    monkeypatch.setattr(
+        "backend.app.services.printer_media.shutil.disk_usage",
+        lambda _path: SimpleNamespace(free=printer_media.PRINTER_ZIP_FREE_SPACE_RESERVE + 1024 * 1024),
+    )
+
+    async def fake_download(_ip, _code, _remote_path, local_path: Path, **_kwargs):
+        await asyncio.sleep(0.01)
+        local_path.write_bytes(b"A" * (10 * 1024 * 1024))
+        return True
+
+    with patch(
+        "backend.app.services.printer_media.download_file_async",
+        new=AsyncMock(side_effect=fake_download),
+    ):
+        outcomes = await asyncio.gather(
+            build_printer_files_zip(printer, ["/first.gcode"], {"/first.gcode": 2}),
+            build_printer_files_zip(printer, ["/second.gcode"], {"/second.gcode": 2}),
+            return_exceptions=True,
+        )
+
+    assert all(isinstance(outcome, PrinterFilesZipInsufficientSpaceError) for outcome in outcomes), outcomes
+    root = archive_dir / "temp" / "printer-file-downloads"
+    assert [child for child in root.iterdir() if child.is_dir()] == []
 
 
 @pytest.mark.asyncio

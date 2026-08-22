@@ -4745,8 +4745,14 @@ export const api = {
         signal,
       });
       jobId = status.job_id;
+      let polls = 0;
       while (status.state === 'queued' || status.state === 'preparing') {
         onProgress?.(status.successful + status.failed, status.requested);
+        // Small selections finish in the first seconds, so poll quickly there.
+        // A large one runs for up to half an hour, where half-second polling is
+        // thousands of requests that each re-check the caller's credentials.
+        const delay = polls < 10 ? 500 : 2000;
+        polls += 1;
         await new Promise<void>((resolve, reject) => {
           if (signal?.aborted) {
             reject(new DOMException('Download cancelled', 'AbortError'));
@@ -4759,7 +4765,7 @@ export const api = {
           const timer = window.setTimeout(() => {
             signal?.removeEventListener('abort', onAbort);
             resolve();
-          }, 500);
+          }, delay);
           signal?.addEventListener('abort', onAbort, { once: true });
         });
         status = await request<JobStatus>(`/printers/${printerId}/files/download-jobs/${jobId}`, { signal });

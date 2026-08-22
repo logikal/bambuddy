@@ -4,6 +4,7 @@ import logging
 import os
 import secrets
 import time
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -1129,6 +1130,15 @@ async def _user_from_api_key(db: AsyncSession, api_key: APIKey) -> User | None:
     return user
 
 
+# The row a successful validation produced for the request in flight. Printer-
+# scoped routes validate the same credential twice -- once in the permission
+# gate, once for the key's printer allowlist -- and a validation is a pbkdf2
+# verify plus a ``last_used`` write, so the second one is pure cost. Keyed by
+# the raw credential so a request carrying two of them can never cross their
+# rows, and held in a ContextVar so it cannot outlive the task that set it.
+_validated_api_key: ContextVar[tuple[str, APIKey] | None] = ContextVar("_validated_api_key", default=None)
+
+
 async def _validate_api_key(db: AsyncSession, api_key_value: str) -> APIKey | None:
     """Validate an API key and return the APIKey object if valid, None otherwise.
 
@@ -1163,6 +1173,7 @@ async def _validate_api_key(db: AsyncSession, api_key_value: str) -> APIKey | No
                 # Update last_used timestamp
                 api_key.last_used = datetime.now(timezone.utc)
                 await db.commit()
+                _validated_api_key.set((api_key_value, api_key))
                 return api_key
     except Exception as e:  # SEC-AUTH-EXC: validation failure returns None; every caller treats None as "invalid key" → 401 (fail-closed)
         logger.warning("API key validation error: %s", e)
@@ -1642,6 +1653,9 @@ async def validated_api_key_from_request(
         candidate = credentials.credentials
     if candidate is None:
         return None
+    cached = _validated_api_key.get()
+    if cached is not None and cached[0] == candidate:
+        return cached[1]
     async with async_session() as db:
         api_key = await _validate_api_key(db, candidate)
         if api_key is None:

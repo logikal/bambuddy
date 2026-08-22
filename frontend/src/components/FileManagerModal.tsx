@@ -349,13 +349,19 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
       }
     }), [data?.files, searchQuery, sortBy]);
 
+  // Drop selections the user can no longer see -- but only when the listing is
+  // real. An unreachable printer answers with an empty file list and a warning,
+  // and treating that as "those files are gone" would throw away a selection
+  // the user made moments ago because one poll happened to fail.
+  const listingIsReal = !!data && !data.warnings?.includes('printer_unavailable');
   useEffect(() => {
+    if (!listingIsReal) return;
     const visiblePaths = new Set(visibleFiles.filter(file => !file.is_directory).map(file => file.path));
     setSelectedFiles(current => new Set([...current].filter(path => visiblePaths.has(path))));
     if (selectionAnchorRef.current && !visiblePaths.has(selectionAnchorRef.current)) {
       selectionAnchorRef.current = null;
     }
-  }, [visibleFiles]);
+  }, [visibleFiles, listingIsReal]);
 
   useEffect(() => () => downloadAbortRef.current?.abort(), []);
 
@@ -395,23 +401,28 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
 
   const toggleFileSelection = (path: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const shiftKey = e.shiftKey;
+    const selectablePaths = visibleFiles.filter(file => !file.is_directory).map(file => file.path);
+    const anchorIndex = selectionAnchorRef.current
+      ? selectablePaths.indexOf(selectionAnchorRef.current)
+      : -1;
+    const targetIndex = selectablePaths.indexOf(path);
+    const extendsRange = e.shiftKey && anchorIndex !== -1 && targetIndex !== -1;
+
+    // Moved out of the state updater deliberately: React may run an updater
+    // more than once, and a ref assignment is not the kind of thing that
+    // survives being replayed by accident.
+    if (!extendsRange) selectionAnchorRef.current = path;
+
     setSelectedFiles(prev => {
       const next = new Set(prev);
-      const selectablePaths = visibleFiles.filter(file => !file.is_directory).map(file => file.path);
-      const anchorIndex = selectionAnchorRef.current
-        ? selectablePaths.indexOf(selectionAnchorRef.current)
-        : -1;
-      const targetIndex = selectablePaths.indexOf(path);
-
-      if (shiftKey && anchorIndex !== -1 && targetIndex !== -1) {
+      if (extendsRange) {
         const start = Math.min(anchorIndex, targetIndex);
         const end = Math.max(anchorIndex, targetIndex);
         selectablePaths.slice(start, end + 1).forEach(rangePath => next.add(rangePath));
+      } else if (next.has(path)) {
+        next.delete(path);
       } else {
-        if (next.has(path)) next.delete(path);
-        else next.add(path);
-        selectionAnchorRef.current = path;
+        next.add(path);
       }
       return next;
     });
@@ -582,6 +593,8 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
             size="sm"
             onClick={() => refetch()}
             disabled={isLoading}
+            aria-label={t('common.refresh')}
+            title={t('common.refresh')}
           >
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>

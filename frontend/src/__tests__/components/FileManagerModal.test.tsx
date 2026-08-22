@@ -414,6 +414,30 @@ describe('FileManagerModal', () => {
       expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
     });
 
+    it('keeps the selection when a refresh cannot reach the printer', async () => {
+      render(
+        <FileManagerModal printerId={1} printerName="X1 Carbon" onClose={mockOnClose} />
+      );
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Select benchy.3mf' }));
+      expect(screen.getByText('1 selected')).toBeInTheDocument();
+
+      // An unreachable printer answers with an empty list plus a warning. That
+      // is not the same statement as "those files are gone", and it must not
+      // throw away a selection the user made moments ago.
+      server.use(
+        http.get('/api/v1/printers/:id/files', () =>
+          HttpResponse.json({ files: [], warnings: ['printer_unavailable'] })
+        )
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+      expect(await screen.findByText(
+        'The printer file service is unavailable. Try again when the printer is reachable.',
+      )).toBeInTheDocument();
+      expect(screen.getByText('1 selected')).toBeInTheDocument();
+    });
+
     it('drops hidden selections when the filter changes', async () => {
       render(
         <FileManagerModal printerId={1} printerName="X1 Carbon" onClose={mockOnClose} />

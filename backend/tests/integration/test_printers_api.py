@@ -440,6 +440,13 @@ class TestPrintersAPI:
             f"/api/v1/printers/{printer.id}/files/dl/{token}/Test%20Printer%20videos.zip",
         )
         assert replay.status_code == 403
+        # The browser reaches this URL through an <a download> click and saves
+        # whatever comes back under the name it was going to use, so a refusal
+        # has to arrive as a legible file rather than as a JSON body landing on
+        # the user's disk named .zip.
+        assert replay.headers["content-type"].startswith("text/plain")
+        assert 'filename="download-failed.txt"' in replay.headers["content-disposition"]
+        assert b"expired" in replay.content
 
     @pytest.mark.asyncio
     @pytest.mark.integration

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import json
 import logging
 import re
@@ -120,33 +119,6 @@ def _read_job_status(job_id: str) -> PrinterFilesJobStatus | None:
         return PrinterFilesJobStatus(**data)
     except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
         return None
-
-
-def _try_acquire_staging_lock(root: Path):
-    handle = (root / ".build.lock").open("a+")
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        handle.close()
-        return None
-    return handle
-
-
-async def _acquire_staging_lock(root: Path, cancel_signal: _FileCancelSignal | None):
-    """Serialize builds across processes so free-space checks are enforceable."""
-
-    while True:
-        if cancel_signal is not None and cancel_signal.is_set():
-            raise asyncio.CancelledError
-        handle = await asyncio.to_thread(_try_acquire_staging_lock, root)
-        if handle is not None:
-            return handle
-        await asyncio.sleep(0.1)
-
-
-def _release_staging_lock(handle) -> None:
-    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    handle.close()
 
 
 def _naive_utc(value: datetime | None) -> datetime | None:
@@ -321,10 +293,13 @@ def bind_printer_files_zip_to_token(
 
 
 def _check_initial_space(root: Path, sizes: dict[str, int]) -> None:
-    # These sizes are client-reported hints used only for an early rejection.
-    # The FTP callback independently enforces actual bytes and the disk reserve
-    # before every write. A cross-process lock serializes preparations, so two
-    # workers cannot both spend the same free-space reading.
+    # These sizes are client-reported hints used only for an early rejection,
+    # so this is a courtesy, not the bound. The real one is enforced per write
+    # and per FTP callback below, against actual bytes and the live free space,
+    # which is the only thing that can hold when several preparations run at
+    # once -- and they do: nothing serializes them. Two concurrent jobs that
+    # both pass here stop independently at the reserve, and the one that gets
+    # there second fails with a message saying so.
     expected_total = sum(sizes.values())
     if expected_total > MAX_PRINTER_ZIP_BYTES:
         raise PrinterFilesZipTooLargeError(
@@ -363,12 +338,8 @@ async def build_printer_files_zip(
     root = await asyncio.to_thread(_ensure_printer_zip_root)
     await asyncio.to_thread(_prune_stale_bundles, root)
     await asyncio.to_thread(_check_initial_space, root, sizes)
-    staging_lock = await _acquire_staging_lock(root, cancel_signal)
     bundle_dir: Path | None = None
     try:
-        # Recheck after acquiring the cross-process lock: another worker may
-        # have occupied the volume while this request waited.
-        await asyncio.to_thread(_check_initial_space, root, sizes)
         if bundle_key is None:
             bundle_dir = Path(await asyncio.to_thread(tempfile.mkdtemp, prefix="bundle-", dir=root))
         else:
@@ -416,16 +387,16 @@ async def build_printer_files_zip(
                     if not downloaded:
                         failed_paths.append(remote_path)
                         continue
+                    # Deliberately no second size comparison here. The transfer
+                    # was already checked against the printer's own SIZE, which
+                    # download_to_file treats as the authority precisely because
+                    # it beats a hint the browser round-tripped; re-judging the
+                    # result against that hint would overrule the better number
+                    # with the worse one. The hint goes stale in exactly the case
+                    # this feature exists for -- an /ipcam chunk or a timelapse
+                    # still being written when the listing was taken -- and a
+                    # complete file would then be dropped as "truncated".
                     file_size = (await asyncio.to_thread(staged_path.stat)).st_size
-                    if expected_size is not None and file_size != expected_size:
-                        logger.warning(
-                            "Skipping truncated printer file %s: got %s bytes, expected %s",
-                            remote_path,
-                            file_size,
-                            expected_size,
-                        )
-                        failed_paths.append(remote_path)
-                        continue
                     if total_bytes + file_size > MAX_PRINTER_ZIP_BYTES:
                         raise PrinterFilesZipTooLargeError(
                             f"Downloaded files exceed the {MAX_PRINTER_ZIP_BYTES}-byte limit"
@@ -472,8 +443,6 @@ async def build_printer_files_zip(
         if bundle_dir is not None:
             await asyncio.shield(asyncio.to_thread(shutil.rmtree, bundle_dir, ignore_errors=True))
         raise
-    finally:
-        await asyncio.shield(asyncio.to_thread(_release_staging_lock, staging_lock))
 
     if successful == 0 and not allow_empty:
         await asyncio.to_thread(shutil.rmtree, bundle_dir, ignore_errors=True)
@@ -512,17 +481,20 @@ async def build_printer_file(
     bundle_key: str,
     cancel_signal: _FileCancelSignal | None = None,
 ) -> PrinterFilesZipResult:
-    """Stage one printer file on disk for a browser-native download."""
+    """Stage one printer file on disk for a browser-native download.
+
+    Also the read path for the 3MF preview in the file browser, which is why
+    nothing here waits on a shared lock: a preview must not queue behind
+    somebody else's ten-gigabyte selection for as long as that takes.
+    """
 
     if not remote_path.startswith("/") or "\x00" in remote_path:
         raise FileNotFoundError("Invalid printer file path")
     root = await asyncio.to_thread(_ensure_printer_zip_root)
     size_hints = {remote_path: expected_size} if expected_size is not None else {}
     await asyncio.to_thread(_check_initial_space, root, size_hints)
-    staging_lock = await _acquire_staging_lock(root, cancel_signal)
     bundle_dir = root / bundle_key
     try:
-        await asyncio.to_thread(_check_initial_space, root, size_hints)
         await asyncio.to_thread(bundle_dir.mkdir, mode=0o700)
         local_path = bundle_dir / "printer-file"
         downloaded = await download_file_async(
@@ -562,8 +534,6 @@ async def build_printer_file(
     except BaseException:
         await asyncio.shield(asyncio.to_thread(shutil.rmtree, bundle_dir, ignore_errors=True))
         raise
-    finally:
-        await asyncio.shield(asyncio.to_thread(_release_staging_lock, staging_lock))
 
 
 async def _run_printer_files_job(

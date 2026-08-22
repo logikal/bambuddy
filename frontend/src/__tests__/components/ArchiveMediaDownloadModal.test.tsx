@@ -114,6 +114,33 @@ describe('ArchiveMediaDownloadModal', () => {
     expect(screen.getByText('The IP camera directory could not be read')).toBeInTheDocument();
   });
 
+  it('shows how far the preparation has got', async () => {
+    // The file browser has shown per-file progress from this same call all
+    // along; without it the archive side is a spinner for as long as the
+    // transfer takes, which for a few /ipcam chunks is minutes.
+    vi.mocked(api.downloadPrinterFilesAsZip).mockImplementation(
+      (_printerId, _paths, _sizes, _filename, _asZip, _signal, onProgress) => {
+        onProgress?.(1, 2);
+        return new Promise(() => {});
+      },
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ArchiveMediaDownloadModal
+          archiveId={1}
+          archiveName="Test print"
+          printerName="Printer"
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /Download selected \(1\)/i }));
+
+    expect(await screen.findByText('1/2')).toBeInTheDocument();
+  });
+
   it('cancels an in-flight printer preparation when the modal unmounts', async () => {
     let observedSignal: AbortSignal | undefined;
     vi.mocked(api.downloadPrinterFilesAsZip).mockImplementation(
